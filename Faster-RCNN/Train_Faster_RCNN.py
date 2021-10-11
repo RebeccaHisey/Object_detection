@@ -20,7 +20,7 @@ from tensorflow.keras.optimizers import Adam, SGD, RMSprop
 from tensorflow.keras.layers import Input
 from tensorflow.keras.models import Model
 from keras_frcnn import config, data_generators
-from keras_frcnn import losses as losses
+from keras_frcnn import losses as lossFunctions
 import keras_frcnn.roi_helpers as roi_helpers
 from tensorflow.keras import utils
 from matplotlib import pyplot as plt
@@ -42,27 +42,51 @@ class Train_Faster_RCNN:
         return entries
 
     def getClassMapping(self,dataCSV,labelName):
-        class_names = [x for x in dataCSV[labelName].unique()]
-        numericClassNames = [x for x in range(len(class_names))]
-        class_mapping = dict(zip(class_names,numericClassNames))
+        class_names = []
+
         classes_count = {}
-        for name in class_names:
-            count = 0
-            for i in dataCSV.index:
-                for boundingBox in dataCSV[labelName][i]:
-                    if boundingBox['class'] == name:
-                        count+=1
-            classes_count[name] = count
-        return classes_count, class_mapping
+        for i in dataCSV.index:
+            strBoundBox = str(dataCSV[labelName][i])
+            '''if strBoundBox =="[]":
+                dataCSV = dataCSV.drop(i)
+            else:'''
+            strBoundBox = strBoundBox.replace(" ","")
+            strBoundBox = strBoundBox.replace("'", "")
+            strBoundBox = strBoundBox.replace("[", "")
+            strBoundBox = strBoundBox.replace("]", "")
+            boundingBoxes = []
+            if strBoundBox != "":
+                listBoundBox = strBoundBox.split("},{")
+                for boundingBox in listBoundBox:
+                    boundingBox = boundingBox.replace("{", "")
+                    boundingBox = boundingBox.replace("}", "")
+                    keyEntryPairs = boundingBox.split(",")
+                    boundingBoxDict = {}
+                    for pair in keyEntryPairs:
+                        key, entry = pair.split(":")
+                        if entry.isnumeric():
+                            boundingBoxDict[key] = int(entry)
+                        else:
+                            boundingBoxDict[key] = entry
+                    boundingBoxes.append(boundingBoxDict)
+                    if not boundingBoxDict['class'] in class_names:
+                        class_names.append(boundingBoxDict['class'])
+                        classes_count[boundingBoxDict['class']] = 1
+                    else:
+                        classes_count[boundingBoxDict['class']] += 1
+            dataCSV[labelName][i] = boundingBoxes
+        numericClassNames = [x for x in range(len(class_names))]
+        class_mapping = dict(zip(class_names, numericClassNames))
+        return classes_count, class_mapping, dataCSV
 
     def convertTextToNumericLabels(self,textLabels,labelValues):
         numericLabels =[]
         for i in range(len(textLabels)):
-            label = numpy.zeros(len(labelValues))
-            labelIndex = numpy.where(labelValues == textLabels[i])
+            label = np.zeros(len(labelValues))
+            labelIndex = np.where(labelValues == textLabels[i])
             label[labelIndex] = 1
             numericLabels.append(label)
-        return numpy.array(numericLabels)
+        return np.array(numericLabels)
 
     def saveTrainingInfo(self,foldNum,saveLocation,trainingHistory,results):
         LinesToWrite = []
@@ -93,7 +117,7 @@ class Train_Faster_RCNN:
             LinesToWrite.append(valMetrics)
         testStatsHeader = "\n\nTesting Statistics: "
         LinesToWrite.append(testStatsHeader)
-        testLoss = "\n\tTest loss: " + str(results[0])
+        testLoss = "\n\tTest loss: " + str(results["loss"][0])
         LinesToWrite.append(testLoss)
         for i in range(len(self.metrics)):
             testMetrics = "\n\tTest " + self.metrics[i] + ": " + str(results[self.metrics[i]][len(results)-1])
@@ -112,7 +136,7 @@ class Train_Faster_RCNN:
         plt.legend()
         plt.savefig(os.path.join(saveLocation, metric + '.png'))
 
-    def trainOneEpoch(self,epoch_num, epoch_length, dataGenerator, network, rpn_accuracy_rpn_monitor):
+    def trainOneEpoch(self,epoch_num, epoch_length, dataGenerator, network, rpn_accuracy_rpn_monitor,labelName):
         progbar = utils.Progbar(epoch_length)
         print('Epoch {}/{}'.format(epoch_num, self.numEpochs))
         losses = np.zeros((epoch_length, 5))
@@ -121,7 +145,7 @@ class Train_Faster_RCNN:
         rpn_accuracy_for_epoch = []
         start_time = time.time()
 
-        while iter_num != epoch_length:
+        while iter_num != 10:#epoch_length:
             if len(rpn_accuracy_rpn_monitor) == epoch_length and network.verbose:
                 mean_overlapping_bboxes = float(sum(rpn_accuracy_rpn_monitor)) / len(
                     rpn_accuracy_rpn_monitor)
@@ -135,6 +159,8 @@ class Train_Faster_RCNN:
 
             X, Y, img_data = next(dataGenerator)
             # Xval, Yval, img_data_val = next(data_gen_val)
+            width = X.shape[1]
+            height = X.shape[0]
 
             loss_rpn = self.model_rpn.train_on_batch(X, Y)
 
@@ -143,13 +169,13 @@ class Train_Faster_RCNN:
             R = roi_helpers.rpn_to_roi(P_rpn[0], P_rpn[1], network, use_regr=True, overlap_thresh=0.7,
                                        max_boxes=300)
             # note: calc_iou converts from (x1,y1,x2,y2) to (x,y,w,h) format
-            X2, Y1, Y2, IouS = roi_helpers.calc_iou(R, img_data, network, self.class_mapping)
+            X2, Y1, Y2, IouS = roi_helpers.calc_iou(R, img_data, network, self.class_mapping,labelName,width,height)
+
 
             if X2 is None:
                 rpn_accuracy_rpn_monitor.append(0)
                 rpn_accuracy_for_epoch.append(0)
                 continue
-
             neg_samples = np.where(Y1[0, :, -1] == 1)
             pos_samples = np.where(Y1[0, :, -1] == 0)
 
@@ -231,13 +257,17 @@ class Train_Faster_RCNN:
         print('Train Loss Detector regression: {}'.format(loss_class_regr))
         print('Elapsed time: {}'.format(time.time() - start_time))
 
-    def testOneEpoch(self,epoch_num, epoch_length, dataGenerator, network, rpn_accuracy_rpn_monitor,testSet=False):
+    def testOneEpoch(self,epoch_num, epoch_length, dataGenerator, network, rpn_accuracy_rpn_monitor,labelName,testSet=False):
+        progbar = utils.Progbar(epoch_length)
+        print('Epoch {}/{}'.format(epoch_num, self.numEpochs))
         iternum = 0
         rpn_accuracy_for_epoch = []
         losses = np.zeros((epoch_length, 5))
         start_time = time.time()
-        while iternum < epoch_length:
+        while iternum < 10:#epoch_length:
             X, Y, img_data = next(dataGenerator)
+            width = X.shape[1]
+            height = X.shape[0]
             loss_rpn = self.model_rpn.test_on_batch(X, Y)
             P_rpn = self.model_rpn.predict_on_batch(X)
 
@@ -245,7 +275,7 @@ class Train_Faster_RCNN:
                                           overlap_thresh=0.7, max_boxes=300)
             # note: calc_iou converts from (x1,y1,x2,y2) to (x,y,w,h) format
             X2, Y1, Y2, IouS = roi_helpers.calc_iou(R, img_data, network,
-                                                                self.class_mapping)
+                                                                self.class_mapping,labelName,width,height)
 
             if X2 is None:
                 rpn_accuracy_rpn_monitor.append(0)
@@ -302,6 +332,10 @@ class Train_Faster_RCNN:
             losses[iternum, 3] = loss_class[2]
             losses[iternum, 4] = loss_class[3]
 
+            progbar.update(iternum + 1,
+                           [('rpn_cls', losses[iternum, 0]), ('rpn_regr', losses[iternum, 1]),
+                            ('detector_cls', losses[iternum, 2]), ('detector_regr', losses[iternum, 3])])
+
             iternum += 1
 
         loss_rpn_cls = np.mean(losses[:, 0])
@@ -316,6 +350,19 @@ class Train_Faster_RCNN:
             self.history['val_cls_reg_loss'][epoch_num] = loss_class_regr
             self.history['val_loss'][epoch_num] = loss_rpn_cls + loss_rpn_regr + loss_class_cls + loss_class_regr
             self.history['val_accuracy'][epoch_num] = class_acc
+
+            mean_overlapping_bboxes = float(sum(rpn_accuracy_for_epoch)) / len(
+                rpn_accuracy_for_epoch)
+            print(
+                'Mean number of bounding boxes from RPN overlapping ground truth boxes: {}'.format(
+                    mean_overlapping_bboxes))
+            print(
+                'Validation Classifier accuracy for bounding boxes from RPN: {}'.format(class_acc))
+            print('Validation Loss RPN classifier: {}'.format(loss_rpn_cls))
+            print('Validation Loss RPN regression: {}'.format(loss_rpn_regr))
+            print('Validation Loss Detector classifier: {}'.format(loss_class_cls))
+            print('Validation Loss Detector regression: {}'.format(loss_class_regr))
+            print('Elapsed time: {}'.format(time.time() - start_time))
         else:
             self.results['rpn_cls_loss'][epoch_num] = loss_rpn_cls
             self.results['rpn_reg_loss'][epoch_num] = loss_rpn_regr
@@ -323,20 +370,10 @@ class Train_Faster_RCNN:
             self.results['cls_reg_loss'][epoch_num] = loss_class_regr
             self.results['loss'][epoch_num] = loss_rpn_cls + loss_rpn_regr + loss_class_cls + loss_class_regr
             self.results['accuracy'][epoch_num] = class_acc
-        mean_overlapping_bboxes = float(sum(rpn_accuracy_for_epoch)) / len(
-            rpn_accuracy_for_epoch)
 
 
-        print(
-            'Mean number of bounding boxes from RPN overlapping ground truth boxes: {}'.format(
-                mean_overlapping_bboxes))
-        print(
-            'Validation Classifier accuracy for bounding boxes from RPN: {}'.format(class_acc))
-        print('Validation Loss RPN classifier: {}'.format(loss_rpn_cls))
-        print('Validation Loss RPN regression: {}'.format(loss_rpn_regr))
-        print('Validation Loss Detector classifier: {}'.format(loss_class_cls))
-        print('Validation Loss Detector regression: {}'.format(loss_class_regr))
-        print('Elapsed time: {}'.format(time.time() - start_time))
+
+
 
 
     def train(self):
@@ -357,41 +394,45 @@ class Train_Faster_RCNN:
             if not os.path.exists(foldDir):
                 os.mkdir(foldDir)
 
-            labelName = self.dataCSVFile.columns[-1] #This should be the label that will be used to train the network
+            labelName = "Tool bounding box" #This should be the label that will be used to train the network
 
             trainDataset = self.loadData(fold,"Train")
             valDataset = self.loadData(fold,"Validation")
             testDataset = self.loadData(fold,"Test")
-            classes_count, class_mapping = getClassMapping(trainDataset)
+            self.classes_count, self.class_mapping, trainDataset = self.getClassMapping(trainDataset,labelName)
+            self.val_classes_count,_,valDataset = self.getClassMapping(valDataset,labelName)
+            self.test_classes_count,_,testDataset = self.getClassMapping(testDataset,labelName)
+            print("Class mapping: {}".format(self.class_mapping))
+            print("Class count: {}".format(self.classes_count))
 
-            labelValues = self.dataCSVFile[labelName].unique()
-            numpy.savetxt(os.path.join(foldDir,"labels.txt"),labelValues,fmt='%s',delimiter=',')
+            '''labelValues = sorted(self.dataCSVFile[labelName].unique())
+            np.savetxt(os.path.join(foldDir,"labels.txt"),labelValues,fmt='%s',delimiter=',')'''
 
-            if options.parser == 'pascal_voc':
+            if FLAGS.parser == 'pascal_voc':
                 from keras_frcnn.pascal_voc_parser import get_data
-            elif options.parser == 'simple':
+            elif FLAGS.parser == 'simple':
                 from keras_frcnn.simple_parser import get_data
             else:
                 raise ValueError("Command line option parser must be one of 'pascal_voc' or 'simple'")
 
             # pass the settings from the command line, and persist them in the config object
 
-            network.use_horizontal_flips = bool(options.horizontal_flips)
-            network.use_vertical_flips = bool(options.vertical_flips)
-            network.rot_90 = bool(options.rot_90)
+            #network.use_horizontal_flips = bool(options.horizontal_flips)
+            #network.use_vertical_flips = bool(options.vertical_flips)
+            #network.rot_90 = bool(options.rot_90)
 
             #C.model_path = options.output_weight_path #foldDir
-            network.num_rois = int(options.num_rois)
+            #network.num_rois = int(options.num_rois)
 
             # check if weight path was passed via command line
 
             network.base_net_weights = nn.get_weight_path()
 
-            if 'bg' not in classes_count:
-                classes_count['bg'] = 0
-                class_mapping['bg'] = len(class_mapping)
+            if 'bg' not in self.classes_count:
+                self.classes_count['bg'] = 0
+                self.class_mapping['bg'] = len(self.class_mapping)
 
-            network.class_mapping = class_mapping
+            network.class_mapping = self.class_mapping
 
             config_output_filename = os.path.join(foldDir, 'config.pickle')
 
@@ -403,14 +444,14 @@ class Train_Faster_RCNN:
             print('Num train samples {}'.format(len(trainDataset.index)))
             print('Num val samples {}'.format(len(valDataset.index)))
 
-            data_gen_train = data_generators.get_anchor_gt(trainDataset, classes_count, network, nn.get_img_output_length, labelName,
+            data_gen_train = data_generators.get_anchor_gt(trainDataset, self.classes_count, network, nn.get_img_output_length, labelName,
                                                            mode='train')
-            data_gen_val = data_generators.get_anchor_gt(valDataset, classes_count, network, nn.get_img_output_length, labelName,
+            data_gen_val = data_generators.get_anchor_gt(valDataset, self.val_classes_count, network, nn.get_img_output_length, labelName,
                                                          mode='val')
-            data_gen_test = data_generators.get_anchor_gt(testDataset, classes_count, network, nn.get_img_output_length, labelName,
+            data_gen_test = data_generators.get_anchor_gt(testDataset, self.test_classes_count, network, nn.get_img_output_length, labelName,
                                                          mode='test')
 
-            input_shape_img = (None, None, 3)
+            '''input_shape_img = (None, None, 3)
 
             img_input = Input(shape=input_shape_img)
             roi_input = Input(shape=(None, 4))
@@ -427,7 +468,9 @@ class Train_Faster_RCNN:
             self.model_classifier = Model([img_input, roi_input], classifier)
 
             # this is a model that holds both the RPN and the classifier, used to load/save weights for the models
-            self.model_all = Model([img_input, roi_input], shared_layers + classifier)
+            self.model_all = Model([img_input, roi_input], shared_layers + classifier)'''
+            self.model_rpn,self.model_classifier,self.model_all = network.createModel(len(self.class_mapping))
+            num_anchors = len(network.anchor_box_scales) * len(network.anchor_box_ratios)
 
             try:
                 print('loading weights from {}'.format(network.base_net_weights))
@@ -440,16 +483,17 @@ class Train_Faster_RCNN:
             optimizer = Adam(lr=1e-5)
             optimizer_classifier = Adam(lr=1e-5)
             self.model_rpn.compile(optimizer=optimizer,
-                              loss=[losses.rpn_loss_cls(num_anchors), losses.rpn_loss_regr(num_anchors)])
+                                   loss=[lossFunctions.rpn_loss_cls(num_anchors), lossFunctions.rpn_loss_regr(num_anchors)])
             self.model_classifier.compile(optimizer=optimizer_classifier,
-                                     loss=[losses.class_loss_cls, losses.class_loss_regr(len(classes_count) - 1)],
-                                     metrics={'dense_class_{}'.format(len(classes_count)): 'accuracy'})
+                                     loss=[lossFunctions.class_loss_cls, lossFunctions.class_loss_regr(len(self.classes_count) - 1)],
+                                     metrics={'dense_class_{}'.format(len(self.classes_count)): 'accuracy'})
             self.model_all.compile(optimizer='sgd', loss='mae')
 
-            epoch_length = len(all_imgs)
+            epoch_length = len(trainDataset.index)
             # epoch_length  = 200
-            val_epoch_length = len(all_val_imgs)
+            val_epoch_length = len(valDataset.index)
             # val_epoch_length = 100
+            test_epoch_length = len(testDataset.index)
 
             losses = np.zeros((epoch_length, 5))
             rpn_accuracy_rpn_monitor = []
@@ -474,19 +518,23 @@ class Train_Faster_RCNN:
                                                   'val_cls_reg_loss',
                                                   'val_loss',
                                                   'val_accuracy'])
+            for col in self.history.columns:
+                self.history[col] = [None for i in range(self.numEpochs)]
             self.results = pandas.DataFrame(columns=['rpn_cls_loss',
                                                      'rpn_reg_loss',
                                                      'cls_cls_loss',
                                                      'cls_reg_loss',
                                                      'loss',
                                                      'accuracy'])
+            for col in self.results.columns:
+                self.results[col] = [None]
 
             # while (val_loss_decreasing and val_acc_increasing and epoch_num < num_epochs) or (epoch_num < 20):
             for epoch_num in range(self.numEpochs):
-                self.trainOneEpoch(epoch_num,epoch_length,data_gen_train,rpn_accuracy_rpn_monitor)
-                self.testOneEpoch(epoch_num,val_epoch_length,data_gen_val,rpn_accuracy_rpn_monitor_val)
-                curr_loss = self.history["val_loss"][len(self.history.index)-1]
-                curr_accuracy = self.history["val_accuracy"][len(self.history.index)-1]
+                self.trainOneEpoch(epoch_num,epoch_length,data_gen_train,network,rpn_accuracy_rpn_monitor,labelName)
+                self.testOneEpoch(epoch_num,val_epoch_length,data_gen_val,network,rpn_accuracy_rpn_monitor_val,labelName)
+                curr_loss = self.history["val_loss"][epoch_num]
+                curr_accuracy = self.history["val_accuracy"][epoch_num]
                 if curr_loss < best_loss:
                     print(
                         'Total loss decreased from {} to {}, saving weights'.format(best_loss, curr_loss))
@@ -496,22 +544,21 @@ class Train_Faster_RCNN:
                         best_acc = curr_accuracy
                 elif curr_accuracy > best_acc:
                     print('Total accuracy increased from {} to {}, saving weights'.format(best_acc,
-                                                                                          class_acc))
+                                                                                          curr_accuracy))
                     best_acc = curr_accuracy
                     self.model_all.save_weights(os.path.join(foldDir, 'frcnn.hdf5'))
                 else:
                     val_acc_increasing = False
                     val_loss_decreasing = False
 
-
-            self.testOneEpoch(0,epoch_length_test,data_gen_test,rpn_accuracy_rpn_monitor_test,testSet = True)
-            network.saveModel(self.model_all,foldDir)
+            self.model_rpn.load_weights(os.path.join(foldDir, 'frcnn.hdf5'), by_name=True)
+            self.model_classifier.load_weights(os.path.join(foldDir, 'frcnn.hdf5'), by_name=True)
+            self.testOneEpoch(0,test_epoch_length,data_gen_test,network,rpn_accuracy_rpn_monitor_test,labelName,testSet = True)
+            #network.saveModel(self.model_all,foldDir)
             self.saveTrainingInfo(fold,foldDir,self.history,self.results)
             self.saveTrainingPlot(foldDir,self.history,"loss")
             for metric in self.metrics:
                 self.saveTrainingPlot(foldDir,self.history,metric)
-
-
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
@@ -530,7 +577,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--num_epochs',
       type=int,
-      default=10,
+      default=3,
       help='number of epochs used in training'
   )
   parser.add_argument(
@@ -557,6 +604,12 @@ if __name__ == '__main__':
       default='accuracy,rpn_cls_loss,rpn_reg_loss,cls_cls_loss,cls_reg_loss',
       help='Metrics used to evaluate model.'
   )
+  parser.add_argument(
+      '--parser',
+      type=str,
+      default='simple',
+      help='Metrics used to evaluate model.'
+  )
 FLAGS, unparsed = parser.parse_known_args()
-tm = Train_Faster-RCNN()
+tm = Train_Faster_RCNN()
 tm.train()

@@ -4,9 +4,11 @@ import sys
 import numpy
 import tensorflow
 import tensorflow.keras
-import resnet
 from tensorflow.keras import layers
 from tensorflow.keras.models import model_from_json
+from keras_frcnn import resnet as nn
+from tensorflow.keras.layers import Input
+from tensorflow.keras.models import Model
 
 ''' 
 Faster Region-based CNN implementation for 3DSlicer - Deep Learn Live
@@ -112,7 +114,7 @@ class Faster_RCNN():
         networkOutput = str(label) + str(toolClassification)
         return networkOutput
 
-    def createModel(self,imageSize,num_classes):
+    def createModel(self,num_classes):
         input_shape_img = (None, None, 3)
 
         img_input = Input(shape=input_shape_img)
@@ -122,16 +124,18 @@ class Faster_RCNN():
         shared_layers = nn.nn_base(img_input, trainable=True)
 
         # define the RPN, built on the base layers
-        num_anchors = len(network.anchor_box_scales) * len(network.anchor_box_ratios)
+        num_anchors = len(self.anchor_box_scales) * len(self.anchor_box_ratios)
+        rpn = nn.rpn(shared_layers, num_anchors)
 
-        self.baseNetwork = nn.classifier(shared_layers, roi_input, network.num_rois, nb_classes=len(classes_count))
+        classifier = nn.classifier(shared_layers, roi_input, self.num_rois, nb_classes=num_classes, trainable=True)
 
-        self.regionProposalNetwork = Model(img_input, shared_layers)
-        self.classifierNetwork = Model([img_input, roi_input], classifier)
+        self.model_rpn = Model(img_input, rpn[:2])
+        self.model_classifier = Model([img_input, roi_input], classifier)
 
         # this is a model that holds both the RPN and the classifier, used to load/save weights for the models
-        self.model_all = Model([img_input, roi_input], shared_layers + classifier)
-        return (self.regionProposalNetwork,self.classifierNetwork,self.model_all)
+        self.model_all = Model([img_input, roi_input], rpn[:2] + classifier)
+
+        return(self.model_rpn,self.model_classifier,self.model_all)
 
     def saveModel(self,trainedModel,saveLocation):
         JSONmodel = trainedModel.to_json()
