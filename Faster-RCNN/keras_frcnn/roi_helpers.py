@@ -9,95 +9,103 @@ from tensorflow.keras import backend as K
 def calc_iou(R, img_data, C, class_mapping,labelName,width,height):
 	width = 640
 	height = 480
-	bboxes = img_data[labelName]
-	#(width, height) = (img_data['width'], img_data['height'])
-	# get image dimensions for resizing
-	(resized_width, resized_height) = data_generators.get_new_img_size(width, height, C.im_size)
-	resized_width = 800
-	resized_height = 600
+	X_ROIS = []
+	Y1s = []
+	Y2s = []
+	all_IoUs = []
+	for i in range(len(img_data.index)):
+		bboxes = img_data[labelName][img_data.index[i]]
+		#(width, height) = (img_data['width'], img_data['height'])
+		# get image dimensions for resizing
+		(resized_width, resized_height) = data_generators.get_new_img_size(width, height, C.im_size)
+		resized_width = 800
+		resized_height = 600
 
-	gta = np.zeros((len(bboxes), 4))
+		gta = np.zeros((len(bboxes), 4))
 
-	for bbox_num, bbox in enumerate(bboxes):
-		# get the GT box coordinates, and resize to account for image resizing
-		gta[bbox_num, 0] = int(round(bbox['xmin'] * (resized_width / float(width))/C.rpn_stride))
-		gta[bbox_num, 1] = int(round(bbox['xmax'] * (resized_width / float(width))/C.rpn_stride))
-		gta[bbox_num, 2] = int(round(bbox['ymin'] * (resized_height / float(height))/C.rpn_stride))
-		gta[bbox_num, 3] = int(round(bbox['ymax'] * (resized_height / float(height))/C.rpn_stride))
+		for bbox_num, bbox in enumerate(bboxes):
+			# get the GT box coordinates, and resize to account for image resizing
+			gta[bbox_num, 0] = int(round(bbox['xmin'] * (resized_width / float(width))/C.rpn_stride))
+			gta[bbox_num, 1] = int(round(bbox['xmax'] * (resized_width / float(width))/C.rpn_stride))
+			gta[bbox_num, 2] = int(round(bbox['ymin'] * (resized_height / float(height))/C.rpn_stride))
+			gta[bbox_num, 3] = int(round(bbox['ymax'] * (resized_height / float(height))/C.rpn_stride))
 
-	x_roi = []
-	y_class_num = []
-	y_class_regr_coords = []
-	y_class_regr_label = []
-	IoUs = [] # for debugging only
+		x_roi = []
+		y_class_num = []
+		y_class_regr_coords = []
+		y_class_regr_label = []
+		IoUs = [] # for debugging only
+		for ix in range(R[i].shape[0]):
+			(x1, y1, x2, y2) = R[i][ix, :]
+			x1 = int(round(x1))
+			y1 = int(round(y1))
+			x2 = int(round(x2))
+			y2 = int(round(y2))
 
-	for ix in range(R.shape[0]):
-		(x1, y1, x2, y2) = R[ix, :]
-		x1 = int(round(x1))
-		y1 = int(round(y1))
-		x2 = int(round(x2))
-		y2 = int(round(y2))
+			best_iou = 0.0
+			best_bbox = -1
+			for bbox_num in range(len(bboxes)):
+				curr_iou = data_generators.iou([gta[bbox_num, 0], gta[bbox_num, 2], gta[bbox_num, 1], gta[bbox_num, 3]], [x1, y1, x2, y2])
+				if curr_iou > best_iou:
+					best_iou = curr_iou
+					best_bbox = bbox_num
 
-		best_iou = 0.0
-		best_bbox = -1
-		for bbox_num in range(len(bboxes)):
-			curr_iou = data_generators.iou([gta[bbox_num, 0], gta[bbox_num, 2], gta[bbox_num, 1], gta[bbox_num, 3]], [x1, y1, x2, y2])
-			if curr_iou > best_iou:
-				best_iou = curr_iou
-				best_bbox = bbox_num
-
-		if best_iou < C.classifier_min_overlap:
-				continue
-		else:
-			w = x2 - x1
-			h = y2 - y1
-			x_roi.append([x1, y1, w, h])
-			IoUs.append(best_iou)
-
-			if C.classifier_min_overlap <= best_iou < C.classifier_max_overlap:
-				# hard negative example
-				cls_name = 'bg'
-			elif C.classifier_max_overlap <= best_iou:
-				cls_name = bboxes[best_bbox]['class']
-				cxg = (gta[best_bbox, 0] + gta[best_bbox, 1]) / 2.0
-				cyg = (gta[best_bbox, 2] + gta[best_bbox, 3]) / 2.0
-
-				cx = x1 + w / 2.0
-				cy = y1 + h / 2.0
-
-				tx = (cxg - cx) / float(w)
-				ty = (cyg - cy) / float(h)
-				tw = np.log((gta[best_bbox, 1] - gta[best_bbox, 0]) / float(w))
-				th = np.log((gta[best_bbox, 3] - gta[best_bbox, 2]) / float(h))
+			if best_iou < C.classifier_min_overlap:
+					continue
 			else:
-				print('roi = {}'.format(best_iou))
-				raise RuntimeError
+				w = x2 - x1
+				h = y2 - y1
+				x_roi.append([x1, y1, w, h])
+				IoUs.append(best_iou)
 
-		class_num = class_mapping[cls_name]
-		class_label = len(class_mapping) * [0]
-		class_label[class_num] = 1
-		y_class_num.append(copy.deepcopy(class_label))
-		coords = [0] * 4 * (len(class_mapping) - 1)
-		labels = [0] * 4 * (len(class_mapping) - 1)
-		if cls_name != 'bg':
-			label_pos = 4 * class_num
-			sx, sy, sw, sh = C.classifier_regr_std
-			coords[label_pos:4+label_pos] = [sx*tx, sy*ty, sw*tw, sh*th]
-			labels[label_pos:4+label_pos] = [1, 1, 1, 1]
-			y_class_regr_coords.append(copy.deepcopy(coords))
-			y_class_regr_label.append(copy.deepcopy(labels))
-		else:
-			y_class_regr_coords.append(copy.deepcopy(coords))
-			y_class_regr_label.append(copy.deepcopy(labels))
+				if C.classifier_min_overlap <= best_iou < C.classifier_max_overlap:
+					# hard negative example
+					cls_name = 'bg'
+				elif C.classifier_max_overlap <= best_iou:
+					cls_name = bboxes[best_bbox]['class']
+					cxg = (gta[best_bbox, 0] + gta[best_bbox, 1]) / 2.0
+					cyg = (gta[best_bbox, 2] + gta[best_bbox, 3]) / 2.0
 
-	if len(x_roi) == 0:
-		return None, None, None, None
+					cx = x1 + w / 2.0
+					cy = y1 + h / 2.0
 
-	X = np.array(x_roi)
-	Y1 = np.array(y_class_num)
-	Y2 = np.concatenate([np.array(y_class_regr_label),np.array(y_class_regr_coords)],axis=1)
+					tx = (cxg - cx) / float(w)
+					ty = (cyg - cy) / float(h)
+					tw = np.log((gta[best_bbox, 1] - gta[best_bbox, 0]) / float(w))
+					th = np.log((gta[best_bbox, 3] - gta[best_bbox, 2]) / float(h))
+				else:
+					print('roi = {}'.format(best_iou))
+					raise RuntimeError
 
-	return np.expand_dims(X, axis=0), np.expand_dims(Y1, axis=0), np.expand_dims(Y2, axis=0), IoUs
+			class_num = class_mapping[cls_name]
+			class_label = len(class_mapping) * [0]
+			class_label[class_num] = 1
+			y_class_num.append(copy.deepcopy(class_label))
+			coords = [0] * 4 * (len(class_mapping) - 1)
+			labels = [0] * 4 * (len(class_mapping) - 1)
+			if cls_name != 'bg':
+				label_pos = 4 * class_num
+				sx, sy, sw, sh = C.classifier_regr_std
+				coords[label_pos:4+label_pos] = [sx*tx, sy*ty, sw*tw, sh*th]
+				labels[label_pos:4+label_pos] = [1, 1, 1, 1]
+				y_class_regr_coords.append(copy.deepcopy(coords))
+				y_class_regr_label.append(copy.deepcopy(labels))
+			else:
+				y_class_regr_coords.append(copy.deepcopy(coords))
+				y_class_regr_label.append(copy.deepcopy(labels))
+
+		if len(x_roi) == 0:
+			return None, None, None, None
+
+		X = np.array(x_roi)
+		Y1 = np.array(y_class_num)
+		Y2 = np.concatenate([np.array(y_class_regr_label),np.array(y_class_regr_coords)],axis=1)
+		X_ROIS.append(X)
+		Y1s.append(Y1)
+		Y2s.append(Y2)
+		all_IoUs.append(IoUs)
+
+	return np.array(X_ROIS), np.array(Y1s), np.array(Y2s), all_IoUs
 
 def apply_regr(x, y, w, h, tx, ty, tw, th):
 	try:
@@ -231,60 +239,67 @@ def non_max_suppression_fast(boxes, probs, allConfs = [], overlap_thresh=0.9, ma
 import time
 def rpn_to_roi(rpn_layer, regr_layer, C, use_regr=True, max_boxes=300,overlap_thresh=0.9):
 
-	regr_layer = regr_layer / C.std_scaling
+
 
 	anchor_sizes = C.anchor_box_scales
 	anchor_ratios = C.anchor_box_ratios
+	results = []
+	regionProposalLayer = rpn_layer
+	regressionLayer = regr_layer
+	for i in range(rpn_layer.shape[0]):
+	#assert rpn_layer.shape[0] == 1
+		rpn_layer = K.expand_dims(regionProposalLayer[i],axis = 0)
+		regr_layer = K.expand_dims(regressionLayer[i],axis=0)
+		(rows, cols) = rpn_layer.shape[1:3]
+		regr_layer = regr_layer / C.std_scaling
 
-	assert rpn_layer.shape[0] == 1
-	(rows, cols) = rpn_layer.shape[1:3]
+		curr_layer = 0
+		A = np.zeros((4, rpn_layer.shape[1], rpn_layer.shape[2], rpn_layer.shape[3]))
 
-	curr_layer = 0
-	A = np.zeros((4, rpn_layer.shape[1], rpn_layer.shape[2], rpn_layer.shape[3]))
+		for anchor_size in anchor_sizes:
+			for anchor_ratio in anchor_ratios:
 
-	for anchor_size in anchor_sizes:
-		for anchor_ratio in anchor_ratios:
+				anchor_x = (anchor_size * anchor_ratio[0])/C.rpn_stride
+				anchor_y = (anchor_size * anchor_ratio[1])/C.rpn_stride
 
-			anchor_x = (anchor_size * anchor_ratio[0])/C.rpn_stride
-			anchor_y = (anchor_size * anchor_ratio[1])/C.rpn_stride
+				regr = regr_layer[0, :, :, 4 * curr_layer:4 * curr_layer + 4]
+				regr = K.permute_dimensions(regr, (2, 0, 1))
 
-			regr = regr_layer[0, :, :, 4 * curr_layer:4 * curr_layer + 4]
-			regr = K.permute_dimensions(regr, (2, 0, 1))
+				X, Y = np.meshgrid(np.arange(cols),np. arange(rows))
 
-			X, Y = np.meshgrid(np.arange(cols),np. arange(rows))
+				A[0, :, :, curr_layer] = X - anchor_x/2
+				A[1, :, :, curr_layer] = Y - anchor_y/2
+				A[2, :, :, curr_layer] = anchor_x
+				A[3, :, :, curr_layer] = anchor_y
 
-			A[0, :, :, curr_layer] = X - anchor_x/2
-			A[1, :, :, curr_layer] = Y - anchor_y/2
-			A[2, :, :, curr_layer] = anchor_x
-			A[3, :, :, curr_layer] = anchor_y
+				if use_regr:
+					A[:, :, :, curr_layer] = apply_regr_np(A[:, :, :, curr_layer], regr)
 
-			if use_regr:
-				A[:, :, :, curr_layer] = apply_regr_np(A[:, :, :, curr_layer], regr)
+				A[2, :, :, curr_layer] = np.maximum(1, A[2, :, :, curr_layer])
+				A[3, :, :, curr_layer] = np.maximum(1, A[3, :, :, curr_layer])
+				A[2, :, :, curr_layer] += A[0, :, :, curr_layer]
+				A[3, :, :, curr_layer] += A[1, :, :, curr_layer]
 
-			A[2, :, :, curr_layer] = np.maximum(1, A[2, :, :, curr_layer])
-			A[3, :, :, curr_layer] = np.maximum(1, A[3, :, :, curr_layer])
-			A[2, :, :, curr_layer] += A[0, :, :, curr_layer]
-			A[3, :, :, curr_layer] += A[1, :, :, curr_layer]
+				A[0, :, :, curr_layer] = np.maximum(0, A[0, :, :, curr_layer])
+				A[1, :, :, curr_layer] = np.maximum(0, A[1, :, :, curr_layer])
+				A[2, :, :, curr_layer] = np.minimum(cols-1, A[2, :, :, curr_layer])
+				A[3, :, :, curr_layer] = np.minimum(rows-1, A[3, :, :, curr_layer])
 
-			A[0, :, :, curr_layer] = np.maximum(0, A[0, :, :, curr_layer])
-			A[1, :, :, curr_layer] = np.maximum(0, A[1, :, :, curr_layer])
-			A[2, :, :, curr_layer] = np.minimum(cols-1, A[2, :, :, curr_layer])
-			A[3, :, :, curr_layer] = np.minimum(rows-1, A[3, :, :, curr_layer])
+				curr_layer += 1
 
-			curr_layer += 1
+		all_boxes = np.reshape(A.transpose((0, 3, 1,2)), (4, -1)).transpose((1, 0))
+		all_probs = K.reshape(K.permute_dimensions(rpn_layer,(0, 3, 1, 2)),[-1])
 
-	all_boxes = np.reshape(A.transpose((0, 3, 1,2)), (4, -1)).transpose((1, 0))
-	all_probs = K.reshape(K.permute_dimensions(rpn_layer,(0, 3, 1, 2)),[-1])
+		x1 = all_boxes[:, 0]
+		y1 = all_boxes[:, 1]
+		x2 = all_boxes[:, 2]
+		y2 = all_boxes[:, 3]
 
-	x1 = all_boxes[:, 0]
-	y1 = all_boxes[:, 1]
-	x2 = all_boxes[:, 2]
-	y2 = all_boxes[:, 3]
+		idxs = np.where((x1 - x2 >= 0) | (y1 - y2 >= 0))
 
-	idxs = np.where((x1 - x2 >= 0) | (y1 - y2 >= 0))
+		all_boxes = np.delete(all_boxes, idxs, 0)
+		all_probs = np.delete(all_probs, idxs, 0)
 
-	all_boxes = np.delete(all_boxes, idxs, 0)
-	all_probs = np.delete(all_probs, idxs, 0)
-
-	result = non_max_suppression_fast(all_boxes, all_probs, overlap_thresh=overlap_thresh, max_boxes=max_boxes)[0]
-	return result  
+		result = non_max_suppression_fast(all_boxes, all_probs, overlap_thresh=overlap_thresh, max_boxes=max_boxes)[0]
+		results.append(result)
+	return np.array(results)

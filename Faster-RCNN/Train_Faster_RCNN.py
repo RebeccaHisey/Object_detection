@@ -145,7 +145,7 @@ class Train_Faster_RCNN:
         rpn_accuracy_for_epoch = []
         start_time = time.time()
 
-        while iter_num != 10:#epoch_length:
+        while iter_num <= epoch_length:
             if len(rpn_accuracy_rpn_monitor) == epoch_length and network.verbose:
                 mean_overlapping_bboxes = float(sum(rpn_accuracy_rpn_monitor)) / len(
                     rpn_accuracy_rpn_monitor)
@@ -171,67 +171,76 @@ class Train_Faster_RCNN:
             # note: calc_iou converts from (x1,y1,x2,y2) to (x,y,w,h) format
             X2, Y1, Y2, IouS = roi_helpers.calc_iou(R, img_data, network, self.class_mapping,labelName,width,height)
 
-
             if X2 is None:
                 rpn_accuracy_rpn_monitor.append(0)
                 rpn_accuracy_for_epoch.append(0)
                 continue
-            neg_samples = np.where(Y1[0, :, -1] == 1)
-            pos_samples = np.where(Y1[0, :, -1] == 0)
-
-            if len(neg_samples) > 0:
-                neg_samples = neg_samples[0]
-            else:
-                neg_samples = []
-
-            if len(pos_samples) > 0:
-                pos_samples = pos_samples[0]
-            else:
-                pos_samples = []
-
-            rpn_accuracy_rpn_monitor.append(len(pos_samples))
-            rpn_accuracy_for_epoch.append((len(pos_samples)))
-
-            if network.num_rois > 1:
-                if len(pos_samples) < network.num_rois // 2:
-                    selected_pos_samples = pos_samples.tolist()
-                else:
-                    selected_pos_samples = np.random.choice(pos_samples, network.num_rois // 2,
-                                                            replace=False).tolist()
+            for j in range(self.batch_size):
                 try:
-                    selected_neg_samples = np.random.choice(neg_samples,
-                                                            network.num_rois - len(selected_pos_samples),
-                                                            replace=False).tolist()
-                except:
-                    selected_neg_samples = np.random.choice(neg_samples,
-                                                            network.num_rois - len(selected_pos_samples),
-                                                            replace=True).tolist()
+                    neg_samples = np.where(Y1[j][:, -1] == 1)
+                    pos_samples = np.where(Y1[j][:, -1] == 0)
 
-                sel_samples = selected_pos_samples + selected_neg_samples
-            else:
-                # in the extreme case where num_rois = 1, we pick a random pos or neg sample
-                selected_pos_samples = pos_samples.tolist()
-                selected_neg_samples = neg_samples.tolist()
-                if np.random.randint(0, 2):
-                    sel_samples = random.choice(neg_samples)
+                except IndexError:
+                    neg_samples = [[] for i in range(Y1[j].shape[0])]
+                    pos_samples = [[] for i in range(Y1[j].shape[0])]
+
+                if len(neg_samples) > 0:
+                    neg_samples = neg_samples[0]
                 else:
-                    sel_samples = random.choice(pos_samples)
+                    neg_samples = [[] for i in range(Y1[j].shape[0])]
+                if len(pos_samples) > 0:
+                    pos_samples = pos_samples[0]
+                else:
+                    pos_samples = [[] for i in range(Y1[j].shape[0])]
 
-            loss_class = self.model_classifier.train_on_batch([X, X2[:, sel_samples, :]],
-                                                         [Y1[:, sel_samples, :], Y2[:, sel_samples, :]])
+                rpn_accuracy_rpn_monitor.append(len(pos_samples))
+                rpn_accuracy_for_epoch.append((len(pos_samples)))
 
-            losses[iter_num, 0] = loss_rpn[1]
-            losses[iter_num, 1] = loss_rpn[2]
+                if network.num_rois > 1:
+                    if len(pos_samples) < network.num_rois // 2:
+                        selected_pos_samples = pos_samples.tolist()
+                    else:
+                        selected_pos_samples = np.random.choice(pos_samples, network.num_rois // 2,
+                                                                replace=False).tolist()
+                    try:
+                        selected_neg_samples = np.random.choice(neg_samples,
+                                                                network.num_rois - len(selected_pos_samples),
+                                                                replace=False).tolist()
+                    except:
+                        selected_neg_samples = np.random.choice(neg_samples,
+                                                                network.num_rois - len(selected_pos_samples),
+                                                                replace=True).tolist()
 
-            losses[iter_num, 2] = loss_class[1]
-            losses[iter_num, 3] = loss_class[2]
-            losses[iter_num, 4] = loss_class[3]
+                    sel_samples = selected_pos_samples + selected_neg_samples
+                else:
+                    # in the extreme case where num_rois = 1, we pick a random pos or neg sample
+                    #selected_pos_samples = pos_samples.tolist()
+                    #selected_neg_samples = neg_samples.tolist()
+                    if np.random.randint(0, 2):
+                        sel_samples = random.choice(neg_samples)
+                    else:
+                        sel_samples = random.choice(pos_samples)
+                '''all_X.append(X[j])
+                all_X2.append(X2[j][sel_samples,:])
+                all_Y1.append(Y1[j][sel_samples,:])
+                all_Y2.append(Y2[j][sel_samples,:])'''
+                loss_class = self.model_classifier.train_on_batch([np.expand_dims(X[j],axis=0),np.expand_dims(X2[j][sel_samples,:],axis=0)],
+                                                         [np.expand_dims(Y1[j][sel_samples,:],axis=0),np.expand_dims(Y2[j][sel_samples,:],axis=0)])
+
+                losses[iter_num, 0] = loss_rpn[1]
+                losses[iter_num, 1] = loss_rpn[2]
+
+                losses[iter_num, 2] = loss_class[1]
+                losses[iter_num, 3] = loss_class[2]
+                losses[iter_num, 4] = loss_class[3]
+
 
             progbar.update(iter_num + 1,
                            [('rpn_cls', losses[iter_num, 0]), ('rpn_regr', losses[iter_num, 1]),
                             ('detector_cls', losses[iter_num, 2]), ('detector_regr', losses[iter_num, 3])])
 
-            iter_num += 1
+
+            iter_num += self.batch_size
 
         loss_rpn_cls = np.mean(losses[:, 0])
         loss_rpn_regr = np.mean(losses[:, 1])
@@ -264,7 +273,7 @@ class Train_Faster_RCNN:
         rpn_accuracy_for_epoch = []
         losses = np.zeros((epoch_length, 5))
         start_time = time.time()
-        while iternum < 10:#epoch_length:
+        while iternum < epoch_length:
             X, Y, img_data = next(dataGenerator)
             width = X.shape[1]
             height = X.shape[0]
@@ -336,7 +345,7 @@ class Train_Faster_RCNN:
                            [('rpn_cls', losses[iternum, 0]), ('rpn_regr', losses[iternum, 1]),
                             ('detector_cls', losses[iternum, 2]), ('detector_regr', losses[iternum, 3])])
 
-            iternum += 1
+            iternum += self.batch_size
 
         loss_rpn_cls = np.mean(losses[:, 0])
         loss_rpn_regr = np.mean(losses[:, 1])
@@ -444,31 +453,13 @@ class Train_Faster_RCNN:
             print('Num train samples {}'.format(len(trainDataset.index)))
             print('Num val samples {}'.format(len(valDataset.index)))
 
-            data_gen_train = data_generators.get_anchor_gt(trainDataset, self.classes_count, network, nn.get_img_output_length, labelName,
+            data_gen_train = data_generators.get_anchor_gt(trainDataset, self.classes_count, network, nn.get_img_output_length, labelName,self.batch_size,
                                                            mode='train')
-            data_gen_val = data_generators.get_anchor_gt(valDataset, self.val_classes_count, network, nn.get_img_output_length, labelName,
+            data_gen_val = data_generators.get_anchor_gt(valDataset, self.val_classes_count, network, nn.get_img_output_length, labelName,self.batch_size,
                                                          mode='val')
-            data_gen_test = data_generators.get_anchor_gt(testDataset, self.test_classes_count, network, nn.get_img_output_length, labelName,
+            data_gen_test = data_generators.get_anchor_gt(testDataset, self.test_classes_count, network, nn.get_img_output_length, labelName,self.batch_size,
                                                          mode='test')
 
-            '''input_shape_img = (None, None, 3)
-
-            img_input = Input(shape=input_shape_img)
-            roi_input = Input(shape=(None, 4))
-
-            # define the base network (resnet here, can be VGG, Inception, etc)
-            shared_layers = nn.nn_base(img_input, trainable=True)
-
-            # define the RPN, built on the base layers
-            num_anchors = len(network.anchor_box_scales) * len(network.anchor_box_ratios)
-
-            classifier = nn.classifier(shared_layers, roi_input, network.num_rois, nb_classes=len(classes_count))
-
-            self.model_rpn = Model(img_input, shared_layers)
-            self.model_classifier = Model([img_input, roi_input], classifier)
-
-            # this is a model that holds both the RPN and the classifier, used to load/save weights for the models
-            self.model_all = Model([img_input, roi_input], shared_layers + classifier)'''
             self.model_rpn,self.model_classifier,self.model_all = network.createModel(len(self.class_mapping))
             num_anchors = len(network.anchor_box_scales) * len(network.anchor_box_ratios)
 
@@ -583,7 +574,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--batch_size',
       type=int,
-      default=16,
+      default=4,
       help='type of output your model generates'
   )
   parser.add_argument(
