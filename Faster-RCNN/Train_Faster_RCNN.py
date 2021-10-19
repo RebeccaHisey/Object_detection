@@ -108,7 +108,7 @@ class Train_Faster_RCNN:
                 resampledData = resampledData.append(sel_samples,ignore_index=True)
         resampledData.index = [i for i in range(len(resampledData.index))]
         return newClassCounts,resampledData
-        
+
     def convertTextToNumericLabels(self,textLabels,labelValues):
         numericLabels =[]
         for i in range(len(textLabels)):
@@ -175,7 +175,7 @@ class Train_Faster_RCNN:
         rpn_accuracy_for_epoch = []
         start_time = time.time()
 
-        while iter_num != 30:#epoch_length:
+        while iter_num != epoch_length:
             if len(rpn_accuracy_rpn_monitor) == epoch_length and network.verbose:
                 mean_overlapping_bboxes = float(sum(rpn_accuracy_rpn_monitor)) / len(
                     rpn_accuracy_rpn_monitor)
@@ -294,7 +294,7 @@ class Train_Faster_RCNN:
         rpn_accuracy_for_epoch = []
         losses = np.zeros((epoch_length, 5))
         start_time = time.time()
-        while iternum < 10:#epoch_length:
+        while iternum < epoch_length:
             X, Y, img_data = next(dataGenerator)
             width = X.shape[1]
             height = X.shape[0]
@@ -560,6 +560,7 @@ class Train_Faster_RCNN:
                                                      'accuracy'])
             for col in self.results.columns:
                 self.results[col] = [None]
+            self.boundingBoxResults = pandas.DataFrame(columns=['Folder','FileName',"xmin","ymin",'xmax','ymax']) #To-do: update predict function to predict on all data
 
             # while (val_loss_decreasing and val_acc_increasing and epoch_num < num_epochs) or (epoch_num < 20):
             for epoch_num in range(self.numEpochs):
