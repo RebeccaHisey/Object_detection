@@ -45,69 +45,39 @@ class Train_Faster_RCNN:
         class_names = []
 
         classes_count = {}
-        class_indexes = {}
         for i in dataCSV.index:
             strBoundBox = str(dataCSV[labelName][i])
-            if strBoundBox =="[]":
+            '''if strBoundBox =="[]":
                 dataCSV = dataCSV.drop(i)
-            else:
-                inSelectedLabels = False
-                for label in self.selectedLabels:
-                    if label in strBoundBox:
-                        inSelectedLabels = True
-                if inSelectedLabels:
-                    strBoundBox = strBoundBox.replace(" ","")
-                    strBoundBox = strBoundBox.replace("'", "")
-                    strBoundBox = strBoundBox.replace("[", "")
-                    strBoundBox = strBoundBox.replace("]", "")
-                    boundingBoxes = []
-                    if strBoundBox != "":
-                        listBoundBox = strBoundBox.split("},{")
-                        for boundingBox in listBoundBox:
-                            boundingBox = boundingBox.replace("{", "")
-                            boundingBox = boundingBox.replace("}", "")
-                            keyEntryPairs = boundingBox.split(",")
-                            boundingBoxDict = {}
-                            for pair in keyEntryPairs:
-                                key, entry = pair.split(":")
-                                if entry.isnumeric():
-                                    boundingBoxDict[key] = int(entry)
-                                else:
-                                    boundingBoxDict[key] = entry
-                            boundingBoxes.append(boundingBoxDict)
-                            if not boundingBoxDict['class'] in class_names:
-                                class_names.append(boundingBoxDict['class'])
-                                classes_count[boundingBoxDict['class']] = 1
-                                class_indexes[boundingBoxDict['class']] = [i]
-                            else:
-                                classes_count[boundingBoxDict['class']] += 1
-                                class_indexes[boundingBoxDict['class']].append(i)
-                    dataCSV[labelName][i] = boundingBoxes
-                else:
-                    dataCSV.drop(i)
+            else:'''
+            strBoundBox = strBoundBox.replace(" ","")
+            strBoundBox = strBoundBox.replace("'", "")
+            strBoundBox = strBoundBox.replace("[", "")
+            strBoundBox = strBoundBox.replace("]", "")
+            boundingBoxes = []
+            if strBoundBox != "":
+                listBoundBox = strBoundBox.split("},{")
+                for boundingBox in listBoundBox:
+                    boundingBox = boundingBox.replace("{", "")
+                    boundingBox = boundingBox.replace("}", "")
+                    keyEntryPairs = boundingBox.split(",")
+                    boundingBoxDict = {}
+                    for pair in keyEntryPairs:
+                        key, entry = pair.split(":")
+                        if entry.isnumeric():
+                            boundingBoxDict[key] = int(entry)
+                        else:
+                            boundingBoxDict[key] = entry
+                    boundingBoxes.append(boundingBoxDict)
+                    if not boundingBoxDict['class'] in class_names:
+                        class_names.append(boundingBoxDict['class'])
+                        classes_count[boundingBoxDict['class']] = 1
+                    else:
+                        classes_count[boundingBoxDict['class']] += 1
+            dataCSV[labelName][i] = boundingBoxes
         numericClassNames = [x for x in range(len(class_names))]
         class_mapping = dict(zip(class_names, numericClassNames))
-        if self.balanceSamples:
-            classes_count,dataCSV = self.getBalancedClasses(dataCSV,class_indexes)
         return classes_count, class_mapping, dataCSV
-
-    def getBalancedClasses(self,dataCSV,class_indexes):
-        minCount = math.inf
-        minClass = None
-        newClassCounts = {}
-        for key in class_indexes:
-            if len(class_indexes[key]) <= minCount:
-                minCount = len(class_indexes[key])
-                minClass = key
-        resampledData = dataCSV.iloc(class_indexes[minClass])
-        for key in class_indexes:
-            newClassCounts[key] = minCount
-            if key != minClass:
-                all_samples = dataCSV.iloc(class_indexes[key])
-                sel_samples = all_samples.sample(n=minCount)
-                resampledData = resampledData.append(sel_samples,ignore_index=True)
-        resampledData.index = [i for i in range(len(resampledData.index))]
-        return newClassCounts,resampledData
 
     def convertTextToNumericLabels(self,textLabels,labelValues):
         numericLabels =[]
@@ -418,10 +388,9 @@ class Train_Faster_RCNN:
         self.metrics = FLAGS.metrics.split(",")
         self.numFolds = self.dataCSVFile["Fold"].max() + 1
         self.gClient = None
-        self.selectedLabels = ["syringe","ultrasound"]
-        self.balanceSamples = True
-        network = Faster_RCNN.Faster_RCNN()
+
         for fold in range(0,self.numFolds):
+            network = Faster_RCNN.Faster_RCNN()
             foldDir = self.saveLocation+"_Fold_"+str(fold)
             if not os.path.exists(foldDir):
                 os.mkdir(foldDir)
@@ -483,24 +452,6 @@ class Train_Faster_RCNN:
             data_gen_test = data_generators.get_anchor_gt(testDataset, self.test_classes_count, network, nn.get_img_output_length, labelName,
                                                          mode='test')
 
-            '''input_shape_img = (None, None, 3)
-
-            img_input = Input(shape=input_shape_img)
-            roi_input = Input(shape=(None, 4))
-
-            # define the base network (resnet here, can be VGG, Inception, etc)
-            shared_layers = nn.nn_base(img_input, trainable=True)
-
-            # define the RPN, built on the base layers
-            num_anchors = len(network.anchor_box_scales) * len(network.anchor_box_ratios)
-
-            classifier = nn.classifier(shared_layers, roi_input, network.num_rois, nb_classes=len(classes_count))
-
-            self.model_rpn = Model(img_input, shared_layers)
-            self.model_classifier = Model([img_input, roi_input], classifier)
-
-            # this is a model that holds both the RPN and the classifier, used to load/save weights for the models
-            self.model_all = Model([img_input, roi_input], shared_layers + classifier)'''
             self.model_rpn,self.model_classifier,self.model_all = network.createModel(len(self.class_mapping))
             num_anchors = len(network.anchor_box_scales) * len(network.anchor_box_ratios)
 
@@ -560,7 +511,6 @@ class Train_Faster_RCNN:
                                                      'accuracy'])
             for col in self.results.columns:
                 self.results[col] = [None]
-            self.boundingBoxResults = pandas.DataFrame(columns=['Folder','FileName',"xmin","ymin",'xmax','ymax']) #To-do: update predict function to predict on all data
 
             # while (val_loss_decreasing and val_acc_increasing and epoch_num < num_epochs) or (epoch_num < 20):
             for epoch_num in range(self.numEpochs):
