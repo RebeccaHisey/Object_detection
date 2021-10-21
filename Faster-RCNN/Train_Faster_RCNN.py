@@ -6,6 +6,7 @@ import pandas
 import argparse
 import girder_client
 import cv2
+import math
 import random
 import pprint
 import time
@@ -43,41 +44,100 @@ class Train_Faster_RCNN:
 
     def getClassMapping(self,dataCSV,labelName):
         class_names = []
-
+        class_indexes = {}
         classes_count = {}
+        numProcessed = 0
+        numToProcess = len(dataCSV.index)
         for i in dataCSV.index:
+            if numProcessed % 1000 == 0:
+                print("Processed rows {} / {}".format(numProcessed,numToProcess))
+            numProcessed +=1
             strBoundBox = str(dataCSV[labelName][i])
-            '''if strBoundBox =="[]":
+            if strBoundBox =="[]":
                 dataCSV = dataCSV.drop(i)
-            else:'''
-            strBoundBox = strBoundBox.replace(" ","")
-            strBoundBox = strBoundBox.replace("'", "")
-            strBoundBox = strBoundBox.replace("[", "")
-            strBoundBox = strBoundBox.replace("]", "")
-            boundingBoxes = []
-            if strBoundBox != "":
-                listBoundBox = strBoundBox.split("},{")
-                for boundingBox in listBoundBox:
-                    boundingBox = boundingBox.replace("{", "")
-                    boundingBox = boundingBox.replace("}", "")
-                    keyEntryPairs = boundingBox.split(",")
-                    boundingBoxDict = {}
-                    for pair in keyEntryPairs:
-                        key, entry = pair.split(":")
-                        if entry.isnumeric():
-                            boundingBoxDict[key] = int(entry)
+            else:
+                if self.selectedLabels != None:
+                    for label in self.selectedLabels:
+                        if label in strBoundBox:
+                            inSelectedLabels = True
                         else:
-                            boundingBoxDict[key] = entry
-                    boundingBoxes.append(boundingBoxDict)
-                    if not boundingBoxDict['class'] in class_names:
-                        class_names.append(boundingBoxDict['class'])
-                        classes_count[boundingBoxDict['class']] = 1
-                    else:
-                        classes_count[boundingBoxDict['class']] += 1
-            dataCSV[labelName][i] = boundingBoxes
+                            inSelectedLabels = False
+                else:
+                    inSelectedLabels = True
+                if inSelectedLabels:
+                    strBoundBox = strBoundBox.replace(" ","")
+                    strBoundBox = strBoundBox.replace("'", "")
+                    strBoundBox = strBoundBox.replace("[", "")
+                    strBoundBox = strBoundBox.replace("]", "")
+                    boundingBoxes = []
+                    if strBoundBox != "":
+                        listBoundBox = strBoundBox.split("},{")
+                        for boundingBox in listBoundBox:
+                            boundingBox = boundingBox.replace("{", "")
+                            boundingBox = boundingBox.replace("}", "")
+                            keyEntryPairs = boundingBox.split(",")
+                            boundingBoxDict = {}
+                            for pair in keyEntryPairs:
+                                key, entry = pair.split(":")
+                                if entry.isnumeric():
+                                    boundingBoxDict[key] = int(entry)
+                                else:
+                                    boundingBoxDict[key] = entry
+                            if self.selectedLabels == None or boundingBoxDict['class'] in self.selectedLabels:
+                                boundingBoxes.append(boundingBoxDict)
+                                if not boundingBoxDict['class'] in class_names:
+                                    class_names.append(boundingBoxDict['class'])
+                                    classes_count[boundingBoxDict['class']] = 1
+                                else:
+                                    classes_count[boundingBoxDict['class']] += 1
+                                try:
+                                    class_indexes[boundingBoxDict['class']].append(i)
+                                except KeyError:
+                                    class_indexes[boundingBoxDict['class']] = [i]
+                    dataCSV[labelName][i] = boundingBoxes
+                else:
+                    dataCSV = dataCSV.drop(i)
+        if self.balanceDataset and dataCSV["Set"][dataCSV.index[0]]=='Train':
+            dataCSV,classes_count = self.balanceSamples(dataCSV,class_indexes)
+        dataCSV.index = [i for i in range(len(dataCSV.index))]
         numericClassNames = [x for x in range(len(class_names))]
         class_mapping = dict(zip(class_names, numericClassNames))
         return classes_count, class_mapping, dataCSV
+
+    def balanceSamples(self,dataCSV,class_indexes):
+        minCount = math.inf
+        newDataCSV = pandas.DataFrame(columns=dataCSV.columns)
+        newClass_count = {}
+        if self.selectedLabels !=None:
+            for label in self.selectedLabels:
+                count = len(class_indexes[label])
+                if count < minCount:
+                    minCount = count
+            for label in self.selectedLabels:
+                newClass_count[label] = minCount
+                all_samples = dataCSV.loc[class_indexes[label],:]
+                if len(all_samples.index) == minCount:
+                    newDataCSV = newDataCSV.append(all_samples,ignore_index=True)
+                else:
+                    selectedSamples = all_samples.sample(n=minCount)
+                    newDataCSV = newDataCSV.append(selectedSamples,ignore_index = True)
+        else:
+            for label in class_indexes:
+                count = len(class_indexes[label])
+                if count < minCount:
+                    minCount = count
+            for label in class_indexes:
+                newClass_count[label] = minCount
+                all_samples = dataCSV.loc[class_indexes[label],:]
+                if len(all_samples.index) == minCount:
+                    newDataCSV = newDataCSV.append(all_samples,ignore_index=True)
+                else:
+                    selectedSamples = all_samples.sample(n=minCount)
+                    newDataCSV = newDataCSV.append(selectedSamples,ignore_index = True)
+        return newDataCSV, newClass_count
+
+
+
 
     def convertTextToNumericLabels(self,textLabels,labelValues):
         numericLabels =[]
@@ -145,7 +205,7 @@ class Train_Faster_RCNN:
         rpn_accuracy_for_epoch = []
         start_time = time.time()
 
-        while iter_num != epoch_length:
+        while iter_num < epoch_length:
             if len(rpn_accuracy_rpn_monitor) == epoch_length and network.verbose:
                 mean_overlapping_bboxes = float(sum(rpn_accuracy_rpn_monitor)) / len(
                     rpn_accuracy_rpn_monitor)
@@ -388,8 +448,10 @@ class Train_Faster_RCNN:
         self.metrics = FLAGS.metrics.split(",")
         self.numFolds = self.dataCSVFile["Fold"].max() + 1
         self.gClient = None
+        self.selectedLabels = None #["syringe","ultrasound"]
+        self.balanceDataset = True
 
-        for fold in range(0,self.numFolds):
+        for fold in range(0,1):
             network = Faster_RCNN.Faster_RCNN()
             foldDir = self.saveLocation+"_Fold_"+str(fold)
             if not os.path.exists(foldDir):
@@ -401,6 +463,8 @@ class Train_Faster_RCNN:
             valDataset = self.loadData(fold,"Validation")
             testDataset = self.loadData(fold,"Test")
             self.classes_count, self.class_mapping, trainDataset = self.getClassMapping(trainDataset,labelName)
+            print("Class mapping: {}".format(self.class_mapping))
+            print("Class count: {}".format(self.classes_count))
             self.val_classes_count,_,valDataset = self.getClassMapping(valDataset,labelName)
             self.test_classes_count,_,testDataset = self.getClassMapping(testDataset,labelName)
             print("Class mapping: {}".format(self.class_mapping))
