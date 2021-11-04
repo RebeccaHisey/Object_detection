@@ -448,7 +448,7 @@ class Train_Faster_RCNN:
         self.metrics = FLAGS.metrics.split(",")
         self.numFolds = self.dataCSVFile["Fold"].max() + 1
         self.gClient = None
-        self.selectedLabels = None #["syringe","ultrasound"]
+        self.selectedLabels = None#["syringe","ultrasound"]
         self.balanceDataset = True
 
         for fold in range(0,1):
