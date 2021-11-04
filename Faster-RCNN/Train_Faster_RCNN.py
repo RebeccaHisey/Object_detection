@@ -448,8 +448,9 @@ class Train_Faster_RCNN:
         self.metrics = FLAGS.metrics.split(",")
         self.numFolds = self.dataCSVFile["Fold"].max() + 1
         self.gClient = None
-        self.selectedLabels = None #["syringe","ultrasound"]
+        self.selectedLabels = None#["syringe","ultrasound"]
         self.balanceDataset = True
+        self.patience = 3
 
         for fold in range(0,1):
             network = Faster_RCNN.Faster_RCNN()
@@ -575,13 +576,15 @@ class Train_Faster_RCNN:
                                                      'accuracy'])
             for col in self.results.columns:
                 self.results[col] = [None]
-
-            # while (val_loss_decreasing and val_acc_increasing and epoch_num < num_epochs) or (epoch_num < 20):
-            for epoch_num in range(self.numEpochs):
+            epoch_num=0
+            numEpochsWithoutImprovement = 0
+            while (val_loss_decreasing and val_acc_increasing and epoch_num < self.numEpochs):
+            #for epoch_num in range(self.numEpochs):
                 self.trainOneEpoch(epoch_num,epoch_length,data_gen_train,network,rpn_accuracy_rpn_monitor,labelName)
                 self.testOneEpoch(epoch_num,val_epoch_length,data_gen_val,network,rpn_accuracy_rpn_monitor_val,labelName)
                 curr_loss = self.history["val_loss"][epoch_num]
                 curr_accuracy = self.history["val_accuracy"][epoch_num]
+                epoch_num+=1
                 if curr_loss < best_loss:
                     print(
                         'Total loss decreased from {} to {}, saving weights'.format(best_loss, curr_loss))
@@ -595,8 +598,10 @@ class Train_Faster_RCNN:
                     best_acc = curr_accuracy
                     self.model_all.save_weights(os.path.join(foldDir, 'frcnn.hdf5'))
                 else:
-                    val_acc_increasing = False
-                    val_loss_decreasing = False
+                    numEpochsWithoutImprovement +=1
+                    if numEpochsWithoutImprovement >= self.patience:
+                        val_acc_increasing = False
+                        val_loss_decreasing = False
 
             self.model_rpn.load_weights(os.path.join(foldDir, 'frcnn.hdf5'), by_name=True)
             self.model_classifier.load_weights(os.path.join(foldDir, 'frcnn.hdf5'), by_name=True)
@@ -624,7 +629,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--num_epochs',
       type=int,
-      default=3,
+      default=50,
       help='number of epochs used in training'
   )
   parser.add_argument(

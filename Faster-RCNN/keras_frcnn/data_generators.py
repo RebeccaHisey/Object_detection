@@ -109,10 +109,17 @@ def calc_rpn(C, img_data, width, height, resized_width, resized_height, img_leng
 	gta = np.zeros((num_bboxes, 4))
 	for bbox_num, bbox in enumerate(img_data[labelName]):
 		# get the GT box coordinates, and resize to account for image resizing
-		gta[bbox_num, 0] = bbox['xmin'] * (resized_width / float(width))
-		gta[bbox_num, 1] = bbox['xmax'] * (resized_width / float(width))
-		gta[bbox_num, 2] = bbox['ymin'] * (resized_height / float(height))
-		gta[bbox_num, 3] = bbox['ymax'] * (resized_height / float(height))
+		try:
+			print(len(bbox['ymin']))
+			gta[bbox_num, 0] = bbox['xmin'] * (resized_width / float(width))
+			gta[bbox_num, 1] = bbox['xmax'] * (resized_width / float(width))
+			gta[bbox_num, 2] = bbox['ymin'][0] * (resized_height / float(height))
+			gta[bbox_num, 3] = bbox['ymax'][0] * (resized_height / float(height))
+		except TypeError:
+			gta[bbox_num, 0] = bbox['xmin'] * (resized_width / float(width))
+			gta[bbox_num, 1] = bbox['xmax'] * (resized_width / float(width))
+			gta[bbox_num, 2] = bbox['ymin'] * (resized_height / float(height))
+			gta[bbox_num, 3] = bbox['ymax'] * (resized_height / float(height))
 	
 	# rpn ground truth
 
