@@ -263,9 +263,14 @@ class Train_Faster_RCNN:
                                                             network.num_rois - len(selected_pos_samples),
                                                             replace=False).tolist()
                 except:
-                    selected_neg_samples = np.random.choice(neg_samples,
-                                                            network.num_rois - len(selected_pos_samples),
-                                                            replace=True).tolist()
+                    try:
+                        selected_neg_samples = np.random.choice(neg_samples,
+                                                                    network.num_rois - len(selected_pos_samples),
+                                                                    replace=True).tolist()
+                    except:
+                        selected_neg_samples = np.random.choice(neg_samples,
+                                                                    1,
+                                                                    replace=True).tolist()
 
                 sel_samples = selected_pos_samples + selected_neg_samples
             else:
@@ -448,7 +453,7 @@ class Train_Faster_RCNN:
         self.metrics = FLAGS.metrics.split(",")
         self.numFolds = self.dataCSVFile["Fold"].max() + 1
         self.gClient = None
-        self.selectedLabels = None#["syringe","ultrasound"]
+        self.selectedLabels = ["syringe","ultrasound"]
         self.balanceDataset = True
         self.patience = 3
 
