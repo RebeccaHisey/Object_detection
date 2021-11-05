@@ -97,7 +97,7 @@ class Train_Faster_RCNN:
                     dataCSV[labelName][i] = boundingBoxes
                 else:
                     dataCSV = dataCSV.drop(i)
-        if self.balanceDataset and dataCSV["Set"][dataCSV.index[0]]=='Train':
+        if self.balanceDataset and dataCSV["Set"][dataCSV.index[0]]!='Test':
             dataCSV,classes_count = self.balanceSamples(dataCSV,class_indexes)
         dataCSV.index = [i for i in range(len(dataCSV.index))]
         numericClassNames = [x for x in range(len(class_names))]
@@ -600,6 +600,7 @@ class Train_Faster_RCNN:
                 else:
                     numEpochsWithoutImprovement +=1
                     if numEpochsWithoutImprovement >= self.patience:
+                        print("{} epochs without improvement. EARLY STOPPING".format(self.patience))
                         val_acc_increasing = False
                         val_loss_decreasing = False
 

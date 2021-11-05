@@ -110,7 +110,6 @@ def calc_rpn(C, img_data, width, height, resized_width, resized_height, img_leng
 	for bbox_num, bbox in enumerate(img_data[labelName]):
 		# get the GT box coordinates, and resize to account for image resizing
 		try:
-			print(len(bbox['ymin']))
 			gta[bbox_num, 0] = bbox['xmin'] * (resized_width / float(width))
 			gta[bbox_num, 1] = bbox['xmax'] * (resized_width / float(width))
 			gta[bbox_num, 2] = bbox['ymin'][0] * (resized_height / float(height))
@@ -302,7 +301,7 @@ def get_anchor_gt(all_img_data, class_count, C, img_length_calc_function, labelN
 
 		for i in all_img_data.index:
 
-			#try:
+			try:
 				'''if C.balanced_classes and sample_selector.skip_sample_for_balanced_class(img_data,labelName):
 					continue'''
 
@@ -357,6 +356,6 @@ def get_anchor_gt(all_img_data, class_count, C, img_length_calc_function, labelN
 
 				yield np.copy(x_img), [np.copy(y_rpn_cls), np.copy(y_rpn_regr)], img_data_aug
 
-				'''except Exception as e:
-					print(e)
-					continue'''
+			except Exception as e:
+				print(e)
+				continue
