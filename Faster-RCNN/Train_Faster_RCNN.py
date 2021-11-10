@@ -1,25 +1,14 @@
 from __future__ import division
 import os
-import sys
+import gc
 import numpy as np
 import pandas
 import argparse
-import girder_client
-import cv2
 import math
 import random
-import pprint
 import time
 import pickle
-import tensorflow
-import tensorflow.keras
-from tensorflow import keras
-from tensorflow.keras import layers
-from tensorflow.keras.models import model_from_json
-from tensorflow.keras import backend as K
 from tensorflow.keras.optimizers import Adam, SGD, RMSprop
-from tensorflow.keras.layers import Input
-from tensorflow.keras.models import Model
 from keras_frcnn import config, data_generators
 from keras_frcnn import losses as lossFunctions
 import keras_frcnn.roi_helpers as roi_helpers
@@ -258,21 +247,24 @@ class Train_Faster_RCNN:
                 else:
                     selected_pos_samples = np.random.choice(pos_samples, network.num_rois // 2,
                                                             replace=False).tolist()
-                try:
-                    selected_neg_samples = np.random.choice(neg_samples,
-                                                            network.num_rois - len(selected_pos_samples),
-                                                            replace=False).tolist()
-                except:
+                if neg_samples.size > 0:
                     try:
                         selected_neg_samples = np.random.choice(neg_samples,
-                                                                    network.num_rois - len(selected_pos_samples),
-                                                                    replace=True).tolist()
+                                                                network.num_rois - len(selected_pos_samples),
+                                                                replace=False).tolist()
                     except:
-                        selected_neg_samples = np.random.choice(neg_samples,
-                                                                    1,
-                                                                    replace=True).tolist()
+                        try:
+                            selected_neg_samples = np.random.choice(neg_samples,
+                                                                        network.num_rois - len(selected_pos_samples),
+                                                                        replace=True).tolist()
+                        except:
+                            selected_neg_samples = np.random.choice(neg_samples,
+                                                                        1,
+                                                                        replace=True).tolist()
 
-                sel_samples = selected_pos_samples + selected_neg_samples
+                    sel_samples = selected_pos_samples + selected_neg_samples
+                else:
+                    sel_samples = selected_pos_samples
             else:
                 # in the extreme case where num_rois = 1, we pick a random pos or neg sample
                 selected_pos_samples = pos_samples.tolist()
@@ -369,16 +361,24 @@ class Train_Faster_RCNN:
                 else:
                     selected_pos_samples = np.random.choice(pos_samples, network.num_rois // 2,
                                                             replace=False).tolist()
-                try:
-                    selected_neg_samples = np.random.choice(neg_samples,
-                                                            network.num_rois - len(selected_pos_samples),
-                                                            replace=False).tolist()
-                except:
-                    selected_neg_samples = np.random.choice(neg_samples,
-                                                            network.num_rois - len(selected_pos_samples),
-                                                            replace=True).tolist()
+                if neg_samples.size > 0:
+                    try:
+                        selected_neg_samples = np.random.choice(neg_samples,
+                                                                network.num_rois - len(selected_pos_samples),
+                                                                replace=False).tolist()
+                    except:
+                        try:
+                            selected_neg_samples = np.random.choice(neg_samples,
+                                                                    network.num_rois - len(selected_pos_samples),
+                                                                    replace=True).tolist()
+                        except:
+                            selected_neg_samples = np.random.choice(neg_samples,
+                                                                    1,
+                                                                    replace=True).tolist()
 
-                sel_samples = selected_pos_samples + selected_neg_samples
+                    sel_samples = selected_pos_samples + selected_neg_samples
+                else:
+                    sel_samples = selected_pos_samples
             else:
                 # in the extreme case where num_rois = 1, we pick a random pos or neg sample
                 if np.random.randint(0, 2):
@@ -453,11 +453,11 @@ class Train_Faster_RCNN:
         self.metrics = FLAGS.metrics.split(",")
         self.numFolds = self.dataCSVFile["Fold"].max() + 1
         self.gClient = None
-        self.selectedLabels = ["syringe","ultrasound"]
-        self.balanceDataset = True
+        self.selectedLabels = None #["syringe","ultrasound"]
+        self.balanceDataset = False
         self.patience = 3
 
-        for fold in range(0,1):
+        for fold in range(0,self.numFolds):
             network = Faster_RCNN.Faster_RCNN()
             foldDir = self.saveLocation+"_Fold_"+str(fold)
             if not os.path.exists(foldDir):
@@ -475,9 +475,6 @@ class Train_Faster_RCNN:
             self.test_classes_count,_,testDataset = self.getClassMapping(testDataset,labelName)
             print("Class mapping: {}".format(self.class_mapping))
             print("Class count: {}".format(self.classes_count))
-
-            '''labelValues = sorted(self.dataCSVFile[labelName].unique())
-            np.savetxt(os.path.join(foldDir,"labels.txt"),labelValues,fmt='%s',delimiter=',')'''
 
             if FLAGS.parser == 'pascal_voc':
                 from keras_frcnn.pascal_voc_parser import get_data
@@ -559,20 +556,7 @@ class Train_Faster_RCNN:
 
             val_loss_decreasing = True
             val_acc_increasing = True
-            self.history = pandas.DataFrame(columns = ['rpn_cls_loss',
-                                                  'rpn_reg_loss',
-                                                  'cls_cls_loss',
-                                                  'cls_reg_loss',
-                                                  'loss',
-                                                  'accuracy',
-                                                  'val_rpn_cls_loss',
-                                                  'val_rpn_reg_loss',
-                                                  'val_cls_cls_loss',
-                                                  'val_cls_reg_loss',
-                                                  'val_loss',
-                                                  'val_accuracy'])
-            for col in self.history.columns:
-                self.history[col] = [None for i in range(self.numEpochs)]
+
             self.results = pandas.DataFrame(columns=['rpn_cls_loss',
                                                      'rpn_reg_loss',
                                                      'cls_cls_loss',
@@ -583,6 +567,43 @@ class Train_Faster_RCNN:
                 self.results[col] = [None]
             epoch_num=0
             numEpochsWithoutImprovement = 0
+            if os.path.exists(os.path.join(foldDir,"logFile.txt")):
+                with open(os.path.join(foldDir,"logFile.txt"),'r') as logFile:
+                    completedEpochs = logFile.readline()
+                    self.model_rpn.load_weights(os.path.join(foldDir, 'tempWeights.hdf5'), by_name=True)
+                    self.model_classifier.load_weights(os.path.join(foldDir, 'tempWeights.hdf5'), by_name=True)
+                completedEpochs = completedEpochs.replace("Epochs completed: ","")
+                epoch_num = int(completedEpochs)
+                epoch_num += 1
+            if os.path.exists(os.path.join(foldDir,"history.csv")):
+                self.history = pandas.read_csv(os.path.join(foldDir, "history.csv"))
+            else:
+                self.history = pandas.DataFrame(columns=['rpn_cls_loss',
+                                                         'rpn_reg_loss',
+                                                         'cls_cls_loss',
+                                                         'cls_reg_loss',
+                                                         'loss',
+                                                         'accuracy',
+                                                         'val_rpn_cls_loss',
+                                                         'val_rpn_reg_loss',
+                                                         'val_cls_cls_loss',
+                                                         'val_cls_reg_loss',
+                                                         'val_loss',
+                                                         'val_accuracy'])
+                for col in self.history.columns:
+                    self.history[col] = [None for i in range(self.numEpochs)]
+            if os.path.exists(os.path.join(foldDir,"results.csv")):
+                self.results = pandas.read_csv(os.path.join(foldDir, "results.csv"))
+            else:
+                self.results = pandas.DataFrame(columns=['rpn_cls_loss',
+                                                         'rpn_reg_loss',
+                                                         'cls_cls_loss',
+                                                         'cls_reg_loss',
+                                                         'loss',
+                                                         'accuracy'])
+                for col in self.results.columns:
+                    self.results[col] = [None]
+
             while (val_loss_decreasing and val_acc_increasing and epoch_num < self.numEpochs):
             #for epoch_num in range(self.numEpochs):
                 self.trainOneEpoch(epoch_num,epoch_length,data_gen_train,network,rpn_accuracy_rpn_monitor,labelName)
@@ -608,6 +629,12 @@ class Train_Faster_RCNN:
                         print("{} epochs without improvement. EARLY STOPPING".format(self.patience))
                         val_acc_increasing = False
                         val_loss_decreasing = False
+                self.history.to_csv(os.path.join(foldDir,"history.csv"))
+                self.results.to_csv(os.path.join(foldDir,"results.csv"))
+                self.model_all.save_weights(os.path.join(foldDir, 'tempWeights.hdf5'))
+                with open(os.path.join(foldDir,"logFile.txt"),"w") as logFile:
+                    logFile.write("Epochs completed: {}".format(epoch_num - 1))
+                gc.collect()
 
             self.model_rpn.load_weights(os.path.join(foldDir, 'frcnn.hdf5'), by_name=True)
             self.model_classifier.load_weights(os.path.join(foldDir, 'frcnn.hdf5'), by_name=True)
@@ -635,7 +662,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--num_epochs',
       type=int,
-      default=50,
+      default=15,
       help='number of epochs used in training'
   )
   parser.add_argument(

@@ -359,3 +359,5 @@ def get_anchor_gt(all_img_data, class_count, C, img_length_calc_function, labelN
 			except Exception as e:
 				print(e)
 				continue
+
+
