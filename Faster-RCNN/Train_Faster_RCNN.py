@@ -195,100 +195,110 @@ class Train_Faster_RCNN:
         start_time = time.time()
 
         while iter_num < epoch_length:
-            if len(rpn_accuracy_rpn_monitor) == epoch_length and network.verbose:
-                mean_overlapping_bboxes = float(sum(rpn_accuracy_rpn_monitor)) / len(
-                    rpn_accuracy_rpn_monitor)
-                rpn_accuracy_rpn_monitor = []
-                print(
-                    'Average number of overlapping bounding boxes from RPN = {} for {} previous iterations'.format(
-                        mean_overlapping_bboxes, epoch_length))
-                if mean_overlapping_bboxes == 0:
+            try:
+                if len(rpn_accuracy_rpn_monitor) == epoch_length and network.verbose:
+                    mean_overlapping_bboxes = float(sum(rpn_accuracy_rpn_monitor)) / len(
+                        rpn_accuracy_rpn_monitor)
+                    rpn_accuracy_rpn_monitor = []
                     print(
-                        'RPN is not producing bounding boxes that overlap the ground truth boxes. Check RPN settings or keep training.')
+                        'Average number of overlapping bounding boxes from RPN = {} for {} previous iterations'.format(
+                            mean_overlapping_bboxes, epoch_length))
+                    if mean_overlapping_bboxes == 0:
+                        print(
+                            'RPN is not producing bounding boxes that overlap the ground truth boxes. Check RPN settings or keep training.')
 
-            X, Y, img_data = next(dataGenerator)
-            # Xval, Yval, img_data_val = next(data_gen_val)
-            width = X.shape[1]
-            height = X.shape[0]
+                X, Y, img_data = next(dataGenerator)
+                # Xval, Yval, img_data_val = next(data_gen_val)
+                width = X.shape[1]
+                height = X.shape[0]
 
-            loss_rpn = self.model_rpn.train_on_batch(X, Y)
+                try:
+                    loss_rpn = self.model_rpn.train_on_batch(X, Y)
+                except:
+                    print("{} , {}".format(width,height))
 
-            P_rpn = self.model_rpn.predict_on_batch(X)
+                P_rpn = self.model_rpn.predict_on_batch(X)
 
-            R = roi_helpers.rpn_to_roi(P_rpn[0], P_rpn[1], network, use_regr=True, overlap_thresh=0.7,
-                                       max_boxes=300)
-            # note: calc_iou converts from (x1,y1,x2,y2) to (x,y,w,h) format
-            X2, Y1, Y2, IouS = roi_helpers.calc_iou(R, img_data, network, self.class_mapping,labelName,width,height)
+                R = roi_helpers.rpn_to_roi(P_rpn[0], P_rpn[1], network, use_regr=True, overlap_thresh=0.7,
+                                           max_boxes=300)
+                # note: calc_iou converts from (x1,y1,x2,y2) to (x,y,w,h) format
+                X2, Y1, Y2, IouS = roi_helpers.calc_iou(R, img_data, network, self.class_mapping,labelName,width,height)
 
 
-            if X2 is None:
-                rpn_accuracy_rpn_monitor.append(0)
-                rpn_accuracy_for_epoch.append(0)
-                continue
-            neg_samples = np.where(Y1[0, :, -1] == 1)
-            pos_samples = np.where(Y1[0, :, -1] == 0)
+                if X2 is None:
+                    rpn_accuracy_rpn_monitor.append(0)
+                    rpn_accuracy_for_epoch.append(0)
+                    continue
+                neg_samples = np.where(Y1[0, :, -1] == 1)
+                pos_samples = np.where(Y1[0, :, -1] == 0)
 
-            if len(neg_samples) > 0:
-                neg_samples = neg_samples[0]
-            else:
-                neg_samples = []
-
-            if len(pos_samples) > 0:
-                pos_samples = pos_samples[0]
-            else:
-                pos_samples = []
-
-            rpn_accuracy_rpn_monitor.append(len(pos_samples))
-            rpn_accuracy_for_epoch.append((len(pos_samples)))
-
-            if network.num_rois > 1:
-                if len(pos_samples) < network.num_rois // 2:
-                    selected_pos_samples = pos_samples.tolist()
+                if len(neg_samples) > 0:
+                    neg_samples = neg_samples[0]
                 else:
-                    selected_pos_samples = np.random.choice(pos_samples, network.num_rois // 2,
-                                                            replace=False).tolist()
-                if neg_samples.size > 0:
-                    try:
-                        selected_neg_samples = np.random.choice(neg_samples,
-                                                                network.num_rois - len(selected_pos_samples),
+                    neg_samples = []
+
+                if len(pos_samples) > 0:
+                    pos_samples = pos_samples[0]
+                else:
+                    pos_samples = []
+
+                rpn_accuracy_rpn_monitor.append(len(pos_samples))
+                rpn_accuracy_for_epoch.append((len(pos_samples)))
+
+                if network.num_rois > 1:
+                    if len(pos_samples) < network.num_rois // 2:
+                        selected_pos_samples = pos_samples.tolist()
+                    else:
+                        selected_pos_samples = np.random.choice(pos_samples, network.num_rois // 2,
                                                                 replace=False).tolist()
-                    except:
+                    if neg_samples.size > 0:
                         try:
                             selected_neg_samples = np.random.choice(neg_samples,
-                                                                        network.num_rois - len(selected_pos_samples),
-                                                                        replace=True).tolist()
+                                                                    network.num_rois - len(selected_pos_samples),
+                                                                    replace=False).tolist()
                         except:
-                            selected_neg_samples = np.random.choice(neg_samples,
-                                                                        1,
-                                                                        replace=True).tolist()
+                            try:
+                                selected_neg_samples = np.random.choice(neg_samples,
+                                                                            network.num_rois - len(selected_pos_samples),
+                                                                            replace=True).tolist()
+                            except:
+                                selected_neg_samples = np.random.choice(neg_samples,
+                                                                            1,
+                                                                            replace=True).tolist()
 
-                    sel_samples = selected_pos_samples + selected_neg_samples
+                        sel_samples = selected_pos_samples + selected_neg_samples
+                    else:
+                        sel_samples = selected_pos_samples
                 else:
-                    sel_samples = selected_pos_samples
-            else:
-                # in the extreme case where num_rois = 1, we pick a random pos or neg sample
-                selected_pos_samples = pos_samples.tolist()
-                selected_neg_samples = neg_samples.tolist()
-                if np.random.randint(0, 2):
-                    sel_samples = random.choice(neg_samples)
-                else:
-                    sel_samples = random.choice(pos_samples)
+                    # in the extreme case where num_rois = 1, we pick a random pos or neg sample
+                    selected_pos_samples = pos_samples.tolist()
+                    selected_neg_samples = neg_samples.tolist()
+                    if np.random.randint(0, 2):
+                        sel_samples = random.choice(neg_samples)
+                    else:
+                        sel_samples = random.choice(pos_samples)
+                try:
+                    loss_class = self.model_classifier.train_on_batch([X, X2[:, sel_samples, :]],
+                                                                 [Y1[:, sel_samples, :], Y2[:, sel_samples, :]])
+                except:
+                    print(sel_samples)
 
-            loss_class = self.model_classifier.train_on_batch([X, X2[:, sel_samples, :]],
-                                                         [Y1[:, sel_samples, :], Y2[:, sel_samples, :]])
+                losses[iter_num, 0] = loss_rpn[1]
+                losses[iter_num, 1] = loss_rpn[2]
 
-            losses[iter_num, 0] = loss_rpn[1]
-            losses[iter_num, 1] = loss_rpn[2]
+                losses[iter_num, 2] = loss_class[1]
+                losses[iter_num, 3] = loss_class[2]
+                losses[iter_num, 4] = loss_class[3]
 
-            losses[iter_num, 2] = loss_class[1]
-            losses[iter_num, 3] = loss_class[2]
-            losses[iter_num, 4] = loss_class[3]
+                progbar.update(iter_num + 1,
+                               [('rpn_cls', losses[iter_num, 0]), ('rpn_regr', losses[iter_num, 1]),
+                                ('detector_cls', losses[iter_num, 2]), ('detector_regr', losses[iter_num, 3])])
 
-            progbar.update(iter_num + 1,
-                           [('rpn_cls', losses[iter_num, 0]), ('rpn_regr', losses[iter_num, 1]),
-                            ('detector_cls', losses[iter_num, 2]), ('detector_regr', losses[iter_num, 3])])
+                iter_num += 1
 
-            iter_num += 1
+            except Exception as e:
+                print("Exception: {}".format(e))
+                continue
 
         loss_rpn_cls = np.mean(losses[:, 0])
         loss_rpn_regr = np.mean(losses[:, 1])
@@ -314,6 +324,7 @@ class Train_Faster_RCNN:
         print('Train Loss Detector regression: {}'.format(loss_class_regr))
         print('Elapsed time: {}'.format(time.time() - start_time))
 
+
     def testOneEpoch(self,epoch_num, epoch_length, dataGenerator, network, rpn_accuracy_rpn_monitor,labelName,testSet=False):
         progbar = utils.Progbar(epoch_length)
         print('Epoch {}/{}'.format(epoch_num, self.numEpochs))
@@ -322,86 +333,90 @@ class Train_Faster_RCNN:
         losses = np.zeros((epoch_length, 5))
         start_time = time.time()
         while iternum < epoch_length:
-            X, Y, img_data = next(dataGenerator)
-            width = X.shape[1]
-            height = X.shape[0]
-            loss_rpn = self.model_rpn.test_on_batch(X, Y)
-            P_rpn = self.model_rpn.predict_on_batch(X)
+            try:
+                X, Y, img_data = next(dataGenerator)
+                width = X.shape[1]
+                height = X.shape[0]
+                loss_rpn = self.model_rpn.test_on_batch(X, Y)
+                P_rpn = self.model_rpn.predict_on_batch(X)
 
-            R = roi_helpers.rpn_to_roi(P_rpn[0], P_rpn[1], network, use_regr=True,
-                                          overlap_thresh=0.7, max_boxes=300)
-            # note: calc_iou converts from (x1,y1,x2,y2) to (x,y,w,h) format
-            X2, Y1, Y2, IouS = roi_helpers.calc_iou(R, img_data, network,
-                                                                self.class_mapping,labelName,width,height)
+                R = roi_helpers.rpn_to_roi(P_rpn[0], P_rpn[1], network, use_regr=True,
+                                              overlap_thresh=0.7, max_boxes=300)
+                # note: calc_iou converts from (x1,y1,x2,y2) to (x,y,w,h) format
+                X2, Y1, Y2, IouS = roi_helpers.calc_iou(R, img_data, network,
+                                                                    self.class_mapping,labelName,width,height)
 
-            if X2 is None:
-                rpn_accuracy_rpn_monitor.append(0)
-                rpn_accuracy_for_epoch.append(0)
-                continue
+                if X2 is None:
+                    rpn_accuracy_rpn_monitor.append(0)
+                    rpn_accuracy_for_epoch.append(0)
+                    continue
 
-            neg_samples = np.where(Y1[0, :, -1] == 1)
-            pos_samples = np.where(Y1[0, :, -1] == 0)
+                neg_samples = np.where(Y1[0, :, -1] == 1)
+                pos_samples = np.where(Y1[0, :, -1] == 0)
 
-            if len(neg_samples) > 0:
-                neg_samples = neg_samples[0]
-            else:
-                neg_samples = []
-
-            if len(pos_samples) > 0:
-                pos_samples = pos_samples[0]
-            else:
-                pos_samples = []
-
-            rpn_accuracy_rpn_monitor.append(len(pos_samples))
-            rpn_accuracy_for_epoch.append((len(pos_samples)))
-
-            if network.num_rois > 1:
-                if len(pos_samples) < network.num_rois // 2:
-                    selected_pos_samples = pos_samples.tolist()
+                if len(neg_samples) > 0:
+                    neg_samples = neg_samples[0]
                 else:
-                    selected_pos_samples = np.random.choice(pos_samples, network.num_rois // 2,
-                                                            replace=False).tolist()
-                if neg_samples.size > 0:
-                    try:
-                        selected_neg_samples = np.random.choice(neg_samples,
-                                                                network.num_rois - len(selected_pos_samples),
+                    neg_samples = []
+
+                if len(pos_samples) > 0:
+                    pos_samples = pos_samples[0]
+                else:
+                    pos_samples = []
+
+                rpn_accuracy_rpn_monitor.append(len(pos_samples))
+                rpn_accuracy_for_epoch.append((len(pos_samples)))
+
+                if network.num_rois > 1:
+                    if len(pos_samples) < network.num_rois // 2:
+                        selected_pos_samples = pos_samples.tolist()
+                    else:
+                        selected_pos_samples = np.random.choice(pos_samples, network.num_rois // 2,
                                                                 replace=False).tolist()
-                    except:
+                    if neg_samples.size > 0:
                         try:
                             selected_neg_samples = np.random.choice(neg_samples,
                                                                     network.num_rois - len(selected_pos_samples),
-                                                                    replace=True).tolist()
+                                                                    replace=False).tolist()
                         except:
-                            selected_neg_samples = np.random.choice(neg_samples,
-                                                                    1,
-                                                                    replace=True).tolist()
+                            try:
+                                selected_neg_samples = np.random.choice(neg_samples,
+                                                                        network.num_rois - len(selected_pos_samples),
+                                                                        replace=True).tolist()
+                            except:
+                                selected_neg_samples = np.random.choice(neg_samples,
+                                                                        1,
+                                                                        replace=True).tolist()
 
-                    sel_samples = selected_pos_samples + selected_neg_samples
+                        sel_samples = selected_pos_samples + selected_neg_samples
+                    else:
+                        sel_samples = selected_pos_samples
                 else:
-                    sel_samples = selected_pos_samples
-            else:
-                # in the extreme case where num_rois = 1, we pick a random pos or neg sample
-                if np.random.randint(0, 2):
-                    sel_samples = random.choice(neg_samples)
-                else:
-                    sel_samples = random.choice(pos_samples)
+                    # in the extreme case where num_rois = 1, we pick a random pos or neg sample
+                    if np.random.randint(0, 2):
+                        sel_samples = random.choice(neg_samples)
+                    else:
+                        sel_samples = random.choice(pos_samples)
 
-            loss_class = self.model_classifier.test_on_batch([X, X2[:, sel_samples, :]],
-                                                            [Y1[:, sel_samples, :],
-                                                             Y2[:, sel_samples, :]])
+                loss_class = self.model_classifier.test_on_batch([X, X2[:, sel_samples, :]],
+                                                                [Y1[:, sel_samples, :],
+                                                                 Y2[:, sel_samples, :]])
 
-            losses[iternum, 0] = loss_rpn[1]
-            losses[iternum, 1] = loss_rpn[2]
+                losses[iternum, 0] = loss_rpn[1]
+                losses[iternum, 1] = loss_rpn[2]
 
-            losses[iternum, 2] = loss_class[1]
-            losses[iternum, 3] = loss_class[2]
-            losses[iternum, 4] = loss_class[3]
+                losses[iternum, 2] = loss_class[1]
+                losses[iternum, 3] = loss_class[2]
+                losses[iternum, 4] = loss_class[3]
 
-            progbar.update(iternum + 1,
-                           [('rpn_cls', losses[iternum, 0]), ('rpn_regr', losses[iternum, 1]),
-                            ('detector_cls', losses[iternum, 2]), ('detector_regr', losses[iternum, 3])])
+                progbar.update(iternum + 1,
+                               [('rpn_cls', losses[iternum, 0]), ('rpn_regr', losses[iternum, 1]),
+                                ('detector_cls', losses[iternum, 2]), ('detector_regr', losses[iternum, 3])])
 
-            iternum += 1
+                iternum += 1
+            except Exception as e:
+                print("Exception: {}".format(e))
+                continue
 
         loss_rpn_cls = np.mean(losses[:, 0])
         loss_rpn_regr = np.mean(losses[:, 1])
@@ -453,8 +468,8 @@ class Train_Faster_RCNN:
         self.metrics = FLAGS.metrics.split(",")
         self.numFolds = self.dataCSVFile["Fold"].max() + 1
         self.gClient = None
-        self.selectedLabels = None #["syringe","ultrasound"]
-        self.balanceDataset = False
+        self.selectedLabels = ["syringe","ultrasound"]
+        self.balanceDataset = True
         self.patience = 3
 
         for fold in range(0,self.numFolds):
@@ -592,17 +607,6 @@ class Train_Faster_RCNN:
                                                          'val_accuracy'])
                 for col in self.history.columns:
                     self.history[col] = [None for i in range(self.numEpochs)]
-            if os.path.exists(os.path.join(foldDir,"results.csv")):
-                self.results = pandas.read_csv(os.path.join(foldDir, "results.csv"))
-            else:
-                self.results = pandas.DataFrame(columns=['rpn_cls_loss',
-                                                         'rpn_reg_loss',
-                                                         'cls_cls_loss',
-                                                         'cls_reg_loss',
-                                                         'loss',
-                                                         'accuracy'])
-                for col in self.results.columns:
-                    self.results[col] = [None]
 
             while (val_loss_decreasing and val_acc_increasing and epoch_num < self.numEpochs):
             #for epoch_num in range(self.numEpochs):
@@ -629,8 +633,7 @@ class Train_Faster_RCNN:
                         print("{} epochs without improvement. EARLY STOPPING".format(self.patience))
                         val_acc_increasing = False
                         val_loss_decreasing = False
-                self.history.to_csv(os.path.join(foldDir,"history.csv"))
-                self.results.to_csv(os.path.join(foldDir,"results.csv"))
+                self.history.to_csv(os.path.join(foldDir,"history.csv"),index=False)
                 self.model_all.save_weights(os.path.join(foldDir, 'tempWeights.hdf5'))
                 with open(os.path.join(foldDir,"logFile.txt"),"w") as logFile:
                     logFile.write("Epochs completed: {}".format(epoch_num - 1))
