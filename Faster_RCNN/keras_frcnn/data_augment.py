@@ -14,6 +14,18 @@ def augment(img_data, config, labelName,augment=False):
 	img_data_aug = copy.deepcopy(img_data)'''
 	try:
 		img = cv2.imread(os.path.join(img_data["Folder"], img_data["FileName"]))
+		if "AN" in img_data["FileName"] and img_data["cropped"]==False:
+			imgXMin = 275
+			imgXMax = 575
+			imgYMin = 225
+			imgYMax = 435
+			img = img[imgYMin:imgYMax, imgXMin:imgXMax]
+			for bbox in img_data[labelName]:
+				bbox['xmin'] = bbox['xmin'] - imgXMin
+				bbox['xmax'] = bbox["xmax"] - imgXMin
+				bbox['ymin'] = bbox['ymin'] - imgYMin
+				bbox['ymax'] = bbox["ymax"] - imgYMin
+			img_data["cropped"] = True
 		#img = cv2.imread(os.path.join(img_data["Folder"][img_data.index[0]],img_data["FileName"][img_data.index[0]]))
 	except IndexError:
 		print("Index error caught")

@@ -314,7 +314,6 @@ def get_anchor_gt(all_img_data, class_count, C, img_length_calc_function, labelN
 					print(i in all_img_data.index)
 
 
-
 				img_data_aug, x_img = data_augment.augment(img_data, C, labelName,augment=False) #TO-DO update this function to allow augmentations again
 				#x_img = cv2.imread(os.path.join(img_data["Folder"][i],img_data['FileName'][i]))
 				#(width, height) = (img_data_aug['width'][0], img_data_aug['height'][0])

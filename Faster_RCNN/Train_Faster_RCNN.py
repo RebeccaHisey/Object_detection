@@ -8,6 +8,10 @@ import math
 import random
 import time
 import pickle
+import cv2
+from sklearn.cluster import KMeans
+from fractions import Fraction
+import statistics
 from tensorflow.keras.optimizers import Adam, SGD, RMSprop
 from keras_frcnn import config, data_generators
 from keras_frcnn import losses as lossFunctions
@@ -72,29 +76,54 @@ class Train_Faster_RCNN:
                                     boundingBoxDict[key] = int(entry)
                                 else:
                                     boundingBoxDict[key] = entry
-                            if self.selectedLabels == None or boundingBoxDict['class'] in self.selectedLabels:
-                                boundingBoxes.append(boundingBoxDict)
-                                if not boundingBoxDict['class'] in class_names:
-                                    class_names.append(boundingBoxDict['class'])
-                                    classes_count[boundingBoxDict['class']] = 1
-                                else:
-                                    classes_count[boundingBoxDict['class']] += 1
-                                try:
-                                    class_indexes[boundingBoxDict['class']].append(i)
-                                except KeyError:
-                                    class_indexes[boundingBoxDict['class']] = [i]
+                            x1 = boundingBoxDict["xmin"]
+                            x2 = boundingBoxDict["xmax"]
+                            y1 = boundingBoxDict["ymin"]
+                            y2 = boundingBoxDict["ymax"]
+                            try:
+                                boundingBoxDict["xmin"] = min(x1,x2)
+                                boundingBoxDict["xmax"] = max(x1,x2)
+                                boundingBoxDict["ymin"] = min(y1,y2)
+                                boundingBoxDict["ymax"] = max(y1,y2)
+                                if self.selectedLabels == None or boundingBoxDict['class'] in self.selectedLabels:
+                                    boundingBoxes.append(boundingBoxDict)
+                                    if not boundingBoxDict['class'] in class_names:
+                                        class_names.append(boundingBoxDict['class'])
+                                        classes_count[boundingBoxDict['class']] = 1
+                                    else:
+                                        classes_count[boundingBoxDict['class']] += 1
+                                    try:
+                                        class_indexes[boundingBoxDict['class']].append(i)
+                                    except KeyError:
+                                        class_indexes[boundingBoxDict['class']] = [i]
+                            except TypeError:
+                                print("Incompatible types for bounding box: {}".format(boundingBoxDict))
                     dataCSV[labelName][i] = boundingBoxes
                 else:
                     dataCSV = dataCSV.drop(i)
         if self.balanceDataset and dataCSV["Set"][dataCSV.index[0]]!='Test':
-            dataCSV,classes_count = self.balanceSamples(dataCSV,class_indexes)
+            dataCSV,classes_count = self.balanceSamples(dataCSV,class_indexes) #,minCount=500)
+        if dataCSV["Set"][dataCSV.index[0]]!='Test':
+            imageMeans = self.getImageMeans(dataCSV)
+        else:
+            imageMeans = None
         dataCSV.index = [i for i in range(len(dataCSV.index))]
         numericClassNames = [x for x in range(len(class_names))]
         class_mapping = dict(zip(class_names, numericClassNames))
-        return classes_count, class_mapping, dataCSV
+        dataCSV["cropped"] = [False for x in dataCSV.index]
+        return classes_count, class_mapping, dataCSV,imageMeans
 
-    def balanceSamples(self,dataCSV,class_indexes):
-        minCount = math.inf
+    def getImageMeans(self,dataCSV):
+        imgChannelMeans = np.zeros((3,))
+        for i in dataCSV.index:
+            img = cv2.imread(os.path.join(dataCSV["Folder"][i],dataCSV["FileName"][i]))
+            imgChannelMeans += np.mean(np.mean(img,axis=0),axis=0)
+            del(img)
+        gc.collect()
+        imgChannelMeans = imgChannelMeans/len(dataCSV.index)
+        return imgChannelMeans
+
+    def balanceSamples(self,dataCSV,class_indexes,minCount = math.inf):
         newDataCSV = pandas.DataFrame(columns=dataCSV.columns)
         newClass_count = {}
         if self.selectedLabels !=None:
@@ -125,8 +154,153 @@ class Train_Faster_RCNN:
                     newDataCSV = newDataCSV.append(selectedSamples,ignore_index = True)
         return newDataCSV, newClass_count
 
+    def getWidthsAndHeights(self,trainingData,labelName):
+        kmeansData = pandas.DataFrame(columns = ["FileName", "class","widthAndHeight"])
+        for i in trainingData.index:
+            for bbox in trainingData[labelName][i]:
+                width = bbox["xmax"] - bbox["xmin"]
+                height = bbox["ymax"] - bbox["ymin"]
+                if width != 0 and height != 0:
+                    ratio = width / height
+                    if ratio <= 5:
+                        kmeansData = kmeansData.append({"FileName": trainingData["FileName"][i], "class": bbox["class"],
+                                                        "widthAndHeight": [(bbox["xmax"] - bbox["xmin"]), (bbox['ymax'] - bbox["ymin"])]}, ignore_index=True)
+        return kmeansData
 
+    def getKMeans(self,kMeansData, numClusters):
+        X = np.array([x for x in kMeansData["widthAndHeight"]])
+        kmeans = KMeans(n_clusters=numClusters).fit(X)
+        print(kmeans.cluster_centers_)
+        return kmeans.cluster_centers_
 
+    def plotAreaVSAspect(self,kmeansData):
+        areas = []
+        ratios = []
+        for i in kmeansData.index:
+            if isinstance(kmeansData["widthAndHeight"][i], str):
+                widthAndHeight = kmeansData["widthAndHeight"][i]
+                widthAndHeight = widthAndHeight.replace("[", "")
+                widthAndHeight = widthAndHeight.replace("]", "")
+                widthAndHeight = widthAndHeight.replace(",", "")
+                width, height = widthAndHeight.split()
+
+            else:
+                width, height = kmeansData["widthAndHeight"][i]
+            width = int(width)
+            height = int(height)
+            kmeansData["widthAndHeight"][i] = [width, height]
+            area = width * height
+            ratio = width / height
+            areas.append(area)
+            ratios.append(ratio)
+        print(max(areas))
+        print(max(ratios))
+        fig = plt.figure()
+        plt.scatter(areas, ratios)
+        plt.title("Area vs Aspect Ratio")
+        plt.xlabel('Area')
+        plt.ylabel('Aspect ratio')
+        plt.legend()
+        plt.show()
+
+    def approximateRatios(self,clusters):
+        aspectRatios = []
+        for cluster in range(clusters.shape[0]):
+            width = round(clusters[cluster][0])
+            height = round(clusters[cluster][1])
+            ratio = str(Fraction(width, height))
+            numerator, denom = ratio.split('/')
+            aspectRatios.append([int(numerator), int(denom)])
+        reducedAspectRatios = self.reducedRatios(aspectRatios)
+        return reducedAspectRatios
+
+    def reducedRatios(self,ratios):
+        reducedRatios = []
+        for i in range(len(ratios)):
+            width, height = ratios[i]
+            originalRatio = width / height
+            print("Original ratio: {} / {}".format(width, height))
+            j = 0
+            while width >= 10 or height >= 10:
+                j += 1
+                if width % 2 == 0 and height % 2 == 0:
+                    width = width
+                    height = height
+                elif width % 2 != 0 and height % 2 != 0:
+                    increaseRatio = (width + 1) / (height + 1)
+                    higherWidthRatio = (width + 1) / (height - 1)
+                    decreaseRatio = (width - 1) / (height - 1)
+                    lowerWidthRatio = (width - 1) / (height + 1)
+                    minDifference = min(abs(originalRatio - increaseRatio),
+                                        abs(originalRatio - higherWidthRatio),
+                                        abs(originalRatio - decreaseRatio),
+                                        abs(originalRatio - lowerWidthRatio))
+                    if minDifference == abs(originalRatio - increaseRatio):
+                        width = (width + 1)
+                        height = (height + 1)
+                    elif minDifference == abs(originalRatio - higherWidthRatio):
+                        width = width + 1
+                        height = height - 1
+                    elif minDifference == abs(originalRatio - lowerWidthRatio):
+                        width = width - 1
+                        height = height + 1
+                    else:
+                        width = (width - 1)
+                        height = (height - 1)
+                elif width % 2 != 0:
+                    increaseRatio = (width + 1) / height
+                    decreaseRatio = (width - 1) / height
+                    if abs(originalRatio - increaseRatio) < abs(originalRatio - decreaseRatio):
+                        width = (width + 1)
+                        height = height
+                    else:
+                        width = (width - 1)
+                        height = height
+                else:
+                    increaseRatio = width / (height + 1)
+                    decreaseRatio = width / (height - 1)
+                    if abs(originalRatio - increaseRatio) < abs(originalRatio - decreaseRatio):
+                        width = width
+                        height = (height + 1)
+                    else:
+                        width = width
+                        height = (height - 1)
+                ratio = str(Fraction(int(width), (height)))
+                try:
+                    width, height = ratio.split('/')
+                except ValueError:
+                    width = int(ratio)
+                    height = 1
+                width = int(width)
+                height = int(height)
+                print("Ratio after {} rounds of reduction: {} / {}".format(j, width, height))
+            if not [width, height] in reducedRatios:
+                reducedRatios.append([width, height])
+        return reducedRatios
+
+    def approximateScales(self,kmeansData):
+        widths = []
+        heights = []
+        for i in kmeansData.index:
+            if isinstance(kmeansData["widthAndHeight"][i], str):
+                widthAndHeight = kmeansData["widthAndHeight"][i]
+                widthAndHeight = widthAndHeight.replace("[", "")
+                widthAndHeight = widthAndHeight.replace("]", "")
+                widthAndHeight = widthAndHeight.replace(",", "")
+                width, height = widthAndHeight.split()
+                kmeansData["widthAndHeight"][i] = [width, height]
+            else:
+                width, height = kmeansData["widthAndHeight"][i]
+            width = int(width)
+            height = int(height)
+            widths.append(width)
+            heights.append(height)
+        widths = np.array(widths)
+        minScale = min(widths)
+        maxScale = max(widths)
+        medianScale = statistics.median(widths)
+        modeScale = statistics.mode(widths)
+        return ([minScale, medianScale, modeScale, maxScale])
 
     def convertTextToNumericLabels(self,textLabels,labelValues):
         numericLabels =[]
@@ -471,6 +645,7 @@ class Train_Faster_RCNN:
         self.selectedLabels = ["syringe","ultrasound"]
         self.balanceDataset = True
         self.patience = 3
+        self.customAnchors = True
 
         for fold in range(2,self.numFolds):
             network = Faster_RCNN.Faster_RCNN()
@@ -483,11 +658,11 @@ class Train_Faster_RCNN:
             trainDataset = self.loadData(fold,"Train")
             valDataset = self.loadData(fold,"Validation")
             testDataset = self.loadData(fold,"Test")
-            self.classes_count, self.class_mapping, trainDataset = self.getClassMapping(trainDataset,labelName)
+            self.classes_count, self.class_mapping, trainDataset,imageMeans = self.getClassMapping(trainDataset,labelName)
             print("Class mapping: {}".format(self.class_mapping))
             print("Class count: {}".format(self.classes_count))
-            self.val_classes_count,_,valDataset = self.getClassMapping(valDataset,labelName)
-            self.test_classes_count,_,testDataset = self.getClassMapping(testDataset,labelName)
+            self.val_classes_count,_,valDataset, _ = self.getClassMapping(valDataset,labelName)
+            self.test_classes_count,_,testDataset, _ = self.getClassMapping(testDataset,labelName)
             print("Class mapping: {}".format(self.class_mapping))
             print("Class count: {}".format(self.classes_count))
 
@@ -499,13 +674,23 @@ class Train_Faster_RCNN:
                 raise ValueError("Command line option parser must be one of 'pascal_voc' or 'simple'")
 
             # pass the settings from the command line, and persist them in the config object
+            network.img_channel_mean = imageMeans
+            network.use_horizontal_flips = True
+            network.use_vertical_flips = True
+            network.rot_90 = True
 
-            #network.use_horizontal_flips = bool(options.horizontal_flips)
-            #network.use_vertical_flips = bool(options.vertical_flips)
-            #network.rot_90 = bool(options.rot_90)
+            if self.customAnchors:
+                kMeansData = self.getWidthsAndHeights(trainDataset,labelName)
+                clusterCenters = self.getKMeans(kMeansData, 5)
+                network.anchor_box_ratios = self.approximateRatios(clusterCenters)
+                network.anchor_box_scales = self.approximateScales(kMeansData)
+                print("Approximate anchor box ratios: {}".format(network.anchor_box_ratios))
+                print("Approximate anchor box scales: {}".format(network.anchor_box_scales))
+
+            network.im_size=224
 
             #C.model_path = options.output_weight_path #foldDir
-            #network.num_rois = int(options.num_rois)
+            network.num_rois = int(10)
 
             # check if weight path was passed via command line
 
@@ -622,11 +807,13 @@ class Train_Faster_RCNN:
                     self.model_all.save_weights(os.path.join(foldDir, 'frcnn.hdf5'))
                     if curr_accuracy > best_acc:
                         best_acc = curr_accuracy
+                    numEpochsWithoutImprovement = 0
                 elif curr_accuracy > best_acc:
                     print('Total accuracy increased from {} to {}, saving weights'.format(best_acc,
                                                                                           curr_accuracy))
                     best_acc = curr_accuracy
                     self.model_all.save_weights(os.path.join(foldDir, 'frcnn.hdf5'))
+                    numEpochsWithoutImprovement = 0
                 else:
                     numEpochsWithoutImprovement +=1
                     if numEpochsWithoutImprovement >= self.patience:
@@ -665,7 +852,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--num_epochs',
       type=int,
-      default=15,
+      default=25,
       help='number of epochs used in training'
   )
   parser.add_argument(
