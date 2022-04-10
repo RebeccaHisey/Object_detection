@@ -647,7 +647,7 @@ class Train_Faster_RCNN:
         self.patience = 3
         self.customAnchors = True
 
-        for fold in range(2,self.numFolds):
+        for fold in range(0,self.numFolds):
             network = Faster_RCNN.Faster_RCNN()
             foldDir = self.saveLocation+"_Fold_"+str(fold)
             if not os.path.exists(foldDir):
