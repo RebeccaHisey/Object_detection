@@ -1,0 +1,40 @@
+{
+    "model" : {
+        "min_input_size":       224,
+        "max_input_size":       480,
+        "anchors":              [24,34, 46,84, 68,185, 116,286, 122,97, 171,180, 214,327, 326,193, 359,359],
+        "labels":               ["kangaroo"]
+    },
+
+    "train": {
+        "train_image_folder":   "/home/andy/Desktop/github/kangaroo/images/",
+        "train_annot_folder":   "/home/andy/Desktop/github/kangaroo/annots/",
+        "cache_name":           "yolov3_train.pkl",
+
+        "train_times":          8,
+        "batch_size":           4,
+        "learning_rate":        1e-4,
+        "nb_epochs":            100,
+        "warmup_epochs":        3,
+        "ignore_thresh":        0.5,
+        "gpus":                 "0,1",
+
+        "grid_scales":          [1,1,1],
+        "obj_scale":            5,
+        "noobj_scale":          1,
+        "xywh_scale":           1,
+        "class_scale":          1,
+
+        "tensorboard_dir":      "logs",
+        "saved_weights_name":   "yolov3.h5",
+        "debug":                true
+    },
+
+    "valid": {
+        "valid_image_folder":   "",
+        "valid_annot_folder":   "",
+        "cache_name":           "yolov3_val.pkl",
+
+        "valid_times":          1
+    }
+}
