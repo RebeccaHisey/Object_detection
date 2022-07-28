@@ -67,18 +67,12 @@ def evaluate(model,
         pred_labels = pred_labels[score_sort]
         pred_boxes  = pred_boxes[score_sort]
 
-        '''print("Pred boxes: {}".format(pred_boxes))
-        print("Pred labels: {}".format(pred_labels))'''
         bboxList = []
         for j in range(len(pred_labels)):
             if pred_boxes[j]!=[] and pred_boxes[j][-1]>0:
                 bbox = {"class":pred_labels[j],"xmin":int(pred_boxes[j][0]),"ymin":int(pred_boxes[j][1]),"xmax":int(pred_boxes[j][2]),"ymax":int(pred_boxes[j][3]),"conf":float(pred_boxes[j][4])}
                 bboxList.append(bbox)
-        resultsCSV = resultsCSV.append({"FilePath":i["filename"],"Tool bounding box":bboxList},ignore_index=True)
-        '''rectImage = raw_image[0].copy()
-        for j in range(len(pred_boxes)):
-            if pred_boxes != [] and pred_boxes[j][-1]>0:
-                rectImage = cv2.rectangle(rectImage,(int(pred_boxes[j][0]),int(pred_boxes[j][1])),(int(pred_boxes[j][2]),int(pred_boxes[j][3])),(255,0,0),2)'''
+        resultsCSV = resultsCSV.append({"FilePath":generator.instances[i]["filename"],"Tool bounding box":bboxList},ignore_index=True)
 
         # copy detections to all_detections
         for label in range(generator.num_classes()):
@@ -88,12 +82,6 @@ def evaluate(model,
 
         for label in range(generator.num_classes()):
             all_annotations[i][label] = annotations[annotations[:, 4] == label, :4].copy()
-            '''print(all_annotations[i][label])
-            if all_annotations[i][label].shape[0]>0:
-                rectImage = cv2.rectangle(rectImage, (all_annotations[i][label][0][0], all_annotations[i][label][0][1]),
-                                      (all_annotations[i][label][0][2], all_annotations[i][label][0][3]), (0, 255, 0), 2)
-        cv2.imshow("Prediction", rectImage)
-        cv2.waitKey(0)'''
     resultsCSV.to_csv(os.path.join(save_path,"{}_results.csv".format(mode)))
     # compute mAP by comparing all detections and all annotations
     average_precisions = {}
@@ -234,7 +222,6 @@ def decode_netout(netout, anchors, obj_thresh, net_h, net_w):
 def preprocess_input(image, net_h, net_w):
     new_h, new_w, _ = image.shape
 
-
     # determine the new size of the image
     if (float(net_w)/new_w) < (float(net_h)/new_h):
         new_h = (new_h * net_w)//new_w
@@ -262,7 +249,7 @@ def get_yolo_boxes(model, images, net_h, net_w, anchors, obj_thresh, nms_thresh)
 
     # preprocess the input
     for i in range(nb_images):
-        batch_input[i] = preprocess_input(images[i], net_h, net_w)        
+        batch_input[i] = preprocess_input(images[i], net_h, net_w)
 
     # run the prediction
     batch_output = model.predict_on_batch(batch_input)
