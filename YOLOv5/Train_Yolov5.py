@@ -611,7 +611,7 @@ class TrainYolov5():
         parser.add_argument('--weights', type=str, default=ROOT / 'yolov5s.pt', help='initial weights path')
         parser.add_argument('--img_size', type=list, default=[640,480], help='size of your training images')
         parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
-        parser.add_argument('--data', type=str, default="C:/Users/olivi/OneDrive/Documents/Perk/Labeling/bboxes/ALL-CSVS (for yolov5 test)/data.yaml", help='dataset.yaml path')
+        parser.add_argument('--data_csv_file', type=str, default="C:/Users/olivi/OneDrive/Documents/Perk/Labeling/bboxes/ALL-CSVS (for yolov5 test)/data.yaml", help='dataset.yaml path')
         parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-low.yaml', help='hyperparameters path')
         parser.add_argument('--epochs', type=int, default=300)
         parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs, -1 for autobatch')
@@ -643,7 +643,7 @@ class TrainYolov5():
         parser.add_argument('--save-period', type=int, default=-1, help='Save checkpoint every x epochs (disabled if < 1)')
         parser.add_argument('--seed', type=int, default=0, help='Global training seed')
         parser.add_argument('--local_rank', type=int, default=-1, help='Automatic DDP Multi-GPU argument, do not modify')
-
+        parser.add_argument('--save_location', type=str, default = '', help='where to save weights and training results')
         # Weights & Biases arguments
         parser.add_argument('--entity', default=None, help='W&B: Entity')
         parser.add_argument('--upload_dataset', nargs='?', const=True, default=False, help='W&B: Upload data, "val" option')
