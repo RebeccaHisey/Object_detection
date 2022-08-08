@@ -68,35 +68,65 @@ class TrainYolov5():
         self.save_dir, self.epochs, self.batch_size, self.weights, self.single_cls, self.evolve, self.data, self.cfg, self.resume, self.noval, self.nosave, self.workers, self.freeze, self.size= \
             Path(opt.save_dir), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
             opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
-    
-    def loadData(self,fold,set,dataCSVFile):
-        """_summary_
+
+    def getSetVideos(self, setName, csv, fold):
+        """returns the list of videos being used for each set in the fold
 
         Args:
-            fold (_type_): _description_
-            set (_type_): _description_
+            setName (str): one of "Test", "Train", "Validation"
+            csv (dataframe): dataframe of the master csv containing all the data
+            fold (str): fold number #TODO: check if it is str or int
+
+        Returns:
+            array: contains all the video folders used for the set
+        """
+        entries = csv.loc[(csv["Fold"] == fold) & (csv["Set"] == setName)]
+        folders = entries["Folder"].unique()
+        return folders
+    
+    def loadData(self,fold,dataCSVFile):
+        """reads the master csv and directs the data processessing
+
+        Args:
+            fold (str): fold number
+            set (str): one of "Test", "Train", "Validation"
 
         Returns:
             _type_: _description_
         """
-        entries = dataCSVFile.loc[(dataCSVFile["Fold"] == fold) & (dataCSVFile["Set"] == set)]
-        classMapping = self.writeDataToTextFile(entries)
-        self.writeYaml(entries, classMapping)
+        classMapping = self.writeDataToTextFile(dataCSVFile)
+        self.writeYaml(classMapping, dataCSVFile, fold)
 
-    def writeYaml(self, entries, numClasses):
-        return
+    def writeYaml(self,classMapping,csv, fold):
+        """writes the data.yaml file for the fold
+
+        Args:
+            classMapping (dict): contains all the class names as values and their numerical indices as keys
+            csv (dataframe): the master csv containing all the bounding box data
+            fold (str): fold number
+        """
+        outFile = os.path.join(self.dataPath, "data.yaml")
+        trainFolders = self.getSetVideos("Train", csv, fold)
+        valFolders = self.getSetVideos("Validation", csv, fold)
+        testFolders = self.getSetVideos("Test", csv, fold)
+        trainPaths = {"train": trainFolders.tolist()}
+        valPaths = {"val": valFolders.tolist()}
+        testPaths = {"test": testFolders.tolist()}
+        classNames = classMapping.values()
+        names = {"names": classNames}
+        numClasses = len(classMapping)
+        nc = {"nc": numClasses}
+        data = [trainPaths, valPaths, testPaths, nc, names]
+        with open(outFile, 'w') as yamlFile:
+            yaml.dump(data, yamlFile, default_flow_style=False)
 
 
     def writeDataToTextFile(self, datacsv):
         """converts the data from DLL format into individual txt files for each directory
 
         Args:
-            datacsv (_type_): _description_
-            textFile (_type_): _description_
-            labelFile (_type_): _description_
+            datacsv (dataframe): master csv containing labels and filepaths
         """
-        labels = []
-        trainLines = []
         classMapping = dict()
         classCount = -1
 
