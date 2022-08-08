@@ -224,6 +224,8 @@ class TrainYolov5():
         
     def train(self, hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
+        self.loadData(opt.fold, opt.data)
+        data = self.
         callbacks.run('on_pretrain_routine_start')
 
         # Directories
