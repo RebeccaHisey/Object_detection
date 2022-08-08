@@ -22,6 +22,7 @@ import time
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
+import pandas
 
 import numpy as np
 import torch
@@ -66,9 +67,8 @@ class TrainYolov5():
     def __init__(self):
         opt = self.parse_opt(True)
         self.save_dir, self.epochs, self.batch_size, self.weights, self.single_cls, self.evolve, self.data, self.cfg, self.resume, self.noval, self.nosave, self.workers, self.freeze, self.size= \
-            Path(opt.save_dir), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
-            opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
-
+            Path(opt.save_dir), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data_csv_file, opt.cfg, \
+            opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.img_size
 
     def getSetVideos(self, setName, csv, fold):
         """returns the list of videos being used for each set in the fold
@@ -95,6 +95,7 @@ class TrainYolov5():
         Returns:
             _type_: _description_
         """
+        dataCSVFile = pandas.read_csv(dataCSVFile)
         classMapping = self.writeDataToTextFile(dataCSVFile)
         self.writeYaml(classMapping, dataCSVFile, fold)
 
@@ -106,7 +107,8 @@ class TrainYolov5():
             csv (dataframe): the master csv containing all the bounding box data
             fold (str): fold number
         """
-        outFile = os.path.join(self.data, "data.yaml")
+        self.outFilePath = os.path.join(self.save_dir, "data.yaml")
+        outFile = os.path.join(self.outFilePath)
         trainFolders = self.getSetVideos("Train", csv, fold)
         valFolders = self.getSetVideos("Validation", csv, fold)
         testFolders = self.getSetVideos("Test", csv, fold)
@@ -224,8 +226,9 @@ class TrainYolov5():
         
     def train(self, hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
-        self.loadData(opt.fold, opt.data)
-        data = self.data
+        fold = 0
+        self.loadData(fold, opt.data_csv_file)
+        self.data = self.outFilePath
         callbacks.run('on_pretrain_routine_start')
 
         # Directories
@@ -249,7 +252,7 @@ class TrainYolov5():
         # Loggers
         data_dict = None
         if RANK in {-1, 0}:
-            loggers = Loggers(self.save_dir, weights, opt, hyp, LOGGER)  # loggers instance
+            loggers = Loggers(self.save_dir, self.weights, opt, hyp, LOGGER)  # loggers instance
             # if loggers.wandb:
             #     data_dict = loggers.wandb.data_dict
             #     if resume:
@@ -264,35 +267,35 @@ class TrainYolov5():
         cuda = device.type != 'cpu'
         init_seeds(opt.seed + 1 + RANK, deterministic=True)
         with torch_distributed_zero_first(LOCAL_RANK):
-            data_dict = data_dict or check_dataset(opt.data)  # check if None
+            data_dict = data_dict or check_dataset(self.data)  # check if None
         train_path, val_path = data_dict['train'], data_dict['val']
         nc = 1 if self.single_cls else int(data_dict['nc'])  # number of classes
         names = ['item'] if self.single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
-        assert len(names) == nc, f'{len(names)} names found for nc={nc} dataset in {opt.data}'  # check
+        assert len(names) == nc, f'{len(names)} names found for nc={nc} dataset in {self.data}'  # check
         is_coco = isinstance(val_path, str) and val_path.endswith('coco/val2017.txt')  # COCO dataset
 
         # Model
-        check_suffix(weights, '.pt')  # check weights
-        pretrained = weights.endswith('.pt')
+        check_suffix(self.weights, '.pt')  # check weights
+        pretrained = str(self.weights).endswith('.pt')
         if pretrained:
             with torch_distributed_zero_first(LOCAL_RANK):
-                weights = attempt_download(weights)  # download if not found locally
-            ckpt = torch.load(weights, map_location='cpu')  # load checkpoint to CPU to avoid CUDA memory leak
+                self.weights = attempt_download(self.weights)  # download if not found locally
+            ckpt = torch.load(self.weights, map_location='cpu')  # load checkpoint to CPU to avoid CUDA memory leak
             model = Model(self.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
             exclude = ['anchor'] if (self.cfg or hyp.get('anchors')) and not self.resume else []  # exclude keys
             csd = ckpt['model'].float().state_dict()  # checkpoint state_dict as FP32
             csd = intersect_dicts(csd, model.state_dict(), exclude=exclude)  # intersect
             model.load_state_dict(csd, strict=False)  # load
-            LOGGER.info(f'Transferred {len(csd)}/{len(model.state_dict())} items from {weights}')  # report
+            LOGGER.info(f'Transferred {len(csd)}/{len(model.state_dict())} items from {self.weights}')  # report
         else:
             model = Model(self.cfg, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
         amp = check_amp(model)  # check AMP
 
         # Freeze
-        freeze = [f'model.{x}.' for x in (freeze if len(freeze) > 1 else range(freeze[0]))]  # layers to freeze
+        self.freeze = [f'model.{x}.' for x in (self.freeze if len(self.freeze) > 1 else range(self.freeze[0]))]  # layers to freeze
         for k, v in model.named_parameters():
             v.requires_grad = True  # train all layers
-            if any(x in k for x in freeze):
+            if any(x in k for x in self.freeze):
                 LOGGER.info(f'freezing {k}')
                 v.requires_grad = False
 
@@ -301,22 +304,22 @@ class TrainYolov5():
         imgsz = check_img_size(opt.imgsz, gs, floor=gs * 2)  # verify imgsz is gs-multiple
 
         # Batch size
-        if RANK == -1 and batch_size == -1:  # single-GPU only, estimate best batch size
-            batch_size = check_train_batch_size(model, imgsz, amp)
-            loggers.on_params_update({"batch_size": batch_size})
+        if RANK == -1 and self.batch_size == -1:  # single-GPU only, estimate best batch size
+            self.batch_size = check_train_batch_size(model, imgsz, amp)
+            loggers.on_params_update({"batch_size": self.batch_size})
 
         # Optimizer
         nbs = 64  # nominal batch size
-        accumulate = max(round(nbs / batch_size), 1)  # accumulate loss before optimizing
-        hyp['weight_decay'] *= batch_size * accumulate / nbs  # scale weight_decay
+        accumulate = max(round(nbs / self.batch_size), 1)  # accumulate loss before optimizing
+        hyp['weight_decay'] *= self.batch_size * accumulate / nbs  # scale weight_decay
         LOGGER.info(f"Scaled weight_decay = {hyp['weight_decay']}")
         optimizer = smart_optimizer(model, opt.optimizer, hyp['lr0'], hyp['momentum'], hyp['weight_decay'])
 
         # Scheduler
         if opt.cos_lr:
-            lf = one_cycle(1, hyp['lrf'], epochs)  # cosine 1->hyp['lrf']
+            lf = one_cycle(1, hyp['lrf'], self.epochs)  # cosine 1->hyp['lrf']
         else:
-            lf = lambda x: (1 - x / epochs) * (1.0 - hyp['lrf']) + hyp['lrf']  # linear
+            lf = lambda x: (1 - x / self.epochs) * (1.0 - hyp['lrf']) + hyp['lrf']  # linear
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)  # plot_lr_scheduler(optimizer, scheduler, epochs)
 
         # EMA
@@ -338,10 +341,10 @@ class TrainYolov5():
             # Epochs
             start_epoch = ckpt['epoch'] + 1
             if self.resume:
-                assert start_epoch > 0, f'{weights} training to {epochs} epochs is finished, nothing to resume.'
-            if epochs < start_epoch:
-                LOGGER.info(f"{weights} has been trained for {ckpt['epoch']} epochs. Fine-tuning for {epochs} more epochs.")
-                epochs += ckpt['epoch']  # finetune additional epochs
+                assert start_epoch > 0, f'{self.weights} training to {self.epochs} epochs is finished, nothing to resume.'
+            if self.epochs < start_epoch:
+                LOGGER.info(f"{self.weights} has been trained for {ckpt['epoch']} epochs. Fine-tuning for {self.epochs} more epochs.")
+                self.epochs += ckpt['epoch']  # finetune additional epochs
 
             del ckpt, csd
 
@@ -359,7 +362,7 @@ class TrainYolov5():
         # Trainloader
         train_loader, dataset = create_dataloader(train_path,
                                                 imgsz,
-                                                batch_size // WORLD_SIZE,
+                                                self.batch_size // WORLD_SIZE,
                                                 gs,
                                                 self.single_cls,
                                                 hyp=hyp,
@@ -374,13 +377,13 @@ class TrainYolov5():
                                                 shuffle=True)
         mlc = int(np.concatenate(dataset.labels, 0)[:, 0].max())  # max label class
         nb = len(train_loader)  # number of batches
-        assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {opt.data}. Possible class labels are 0-{nc - 1}'
+        assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {self.data}. Possible class labels are 0-{nc - 1}'
 
         # Process 0
         if RANK in {-1, 0}:
             val_loader = create_dataloader(val_path,
                                         imgsz,
-                                        batch_size // WORLD_SIZE * 2,
+                                        self.batch_size // WORLD_SIZE * 2,
                                         gs,
                                         self.single_cls,
                                         hyp=hyp,
@@ -436,8 +439,8 @@ class TrainYolov5():
         LOGGER.info(f'Image sizes {imgsz} train, {imgsz} val\n'
                     f'Using {train_loader.num_workers * WORLD_SIZE} dataloader workers\n'
                     f"Logging results to {colorstr('bold', self.save_dir)}\n"
-                    f'Starting training for {epochs} epochs...')
-        for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
+                    f'Starting training for {self.epochs} epochs...')
+        for epoch in range(start_epoch, self.epochs):  # epoch ------------------------------------------------------------------
             callbacks.run('on_train_epoch_start')
             model.train()
 
@@ -468,7 +471,7 @@ class TrainYolov5():
                 if ni <= nw:
                     xi = [0, nw]  # x interp
                     # compute_loss.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
-                    accumulate = max(1, np.interp(ni, xi, [1, nbs / batch_size]).round())
+                    accumulate = max(1, np.interp(ni, xi, [1, nbs / self.batch_size]).round())
                     for j, x in enumerate(optimizer.param_groups):
                         # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
                         x['lr'] = np.interp(ni, xi, [hyp['warmup_bias_lr'] if j == 0 else 0.0, x['initial_lr'] * lf(epoch)])
@@ -509,7 +512,7 @@ class TrainYolov5():
                     mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
                     mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'  # (GB)
                     pbar.set_description(('%10s' * 2 + '%10.4g' * 5) %
-                                        (f'{epoch}/{epochs - 1}', mem, *mloss, targets.shape[0], imgs.shape[-1]))
+                                        (f'{self.epoch}/{self.epochs - 1}', mem, *mloss, targets.shape[0], imgs.shape[-1]))
                     callbacks.run('on_train_batch_end', ni, model, imgs, targets, paths, plots)
                     if callbacks.stop_training:
                         return
@@ -523,10 +526,10 @@ class TrainYolov5():
                 # mAP
                 callbacks.run('on_train_epoch_end', epoch=epoch)
                 ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'names', 'stride', 'class_weights'])
-                final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
+                final_epoch = (epoch + 1 == self.epochs) or stopper.possible_stop
                 if not self.noval or final_epoch:  # Calculate mAP
                     results, maps, _ = val.run(data_dict,
-                                            batch_size=batch_size // WORLD_SIZE * 2,
+                                            batch_size=self.batch_size // WORLD_SIZE * 2,
                                             imgsz=imgsz,
                                             model=ema.ema,
                                             single_cls=self.single_cls,
@@ -585,7 +588,7 @@ class TrainYolov5():
                         LOGGER.info(f'\nValidating {f}...')
                         results, _, _ = val.run(
                             data_dict,
-                            batch_size=batch_size // WORLD_SIZE * 2,
+                            batch_size=self.batch_size // WORLD_SIZE * 2,
                             imgsz=imgsz,
                             model=attempt_load(f, device).half(),
                             iou_thres=0.65 if is_coco else 0.60,  # best pycocotools results at 0.65
@@ -643,7 +646,7 @@ class TrainYolov5():
         parser.add_argument('--save-period', type=int, default=-1, help='Save checkpoint every x epochs (disabled if < 1)')
         parser.add_argument('--seed', type=int, default=0, help='Global training seed')
         parser.add_argument('--local_rank', type=int, default=-1, help='Automatic DDP Multi-GPU argument, do not modify')
-        parser.add_argument('--save_location', type=str, default = '', help='where to save weights and training results')
+        parser.add_argument('--save_dir', type=str, default = '', help='where to save weights and training results')
         # Weights & Biases arguments
         parser.add_argument('--entity', default=None, help='W&B: Entity')
         parser.add_argument('--upload_dataset', nargs='?', const=True, default=False, help='W&B: Upload data, "val" option')
@@ -670,8 +673,8 @@ class TrainYolov5():
             opt.cfg, opt.weights, opt.resume = '', ckpt, True  # reinstate
             LOGGER.info(f'Resuming training from {ckpt}')
         else:
-            opt.data, opt.cfg, opt.hyp, opt.weights, opt.project = \
-                check_file(opt.data), check_yaml(opt.cfg), check_yaml(opt.hyp), str(opt.weights), str(opt.project)  # checks
+            self.data, opt.cfg, opt.hyp, opt.weights, opt.project = \
+                check_file(self.data), check_yaml(opt.cfg), check_yaml(opt.hyp), str(opt.weights), str(opt.project)  # checks
             assert len(opt.cfg) or len(opt.weights), 'either --cfg or --weights must be specified'
             if opt.evolve:
                 if opt.project == str(ROOT / 'runs/train'):  # if default project name, rename to runs/evolve
@@ -799,8 +802,6 @@ class TrainYolov5():
         return opt
 
 
-    # if __name__ == "__main__":
-    #     # wandb.init(entity='olivia')
-    #     # wandb.login()
-    #     opt = parse_opt()
-    #     main(opt)
+if __name__ == "__main__":
+    train = TrainYolov5()
+    train.run()

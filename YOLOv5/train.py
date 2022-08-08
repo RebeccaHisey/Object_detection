@@ -638,7 +638,5 @@ def run(**kwargs):
 
 
 if __name__ == "__main__":
-    # wandb.init(entity='olivia')
-    # wandb.login()
     opt = parse_opt()
     main(opt)
