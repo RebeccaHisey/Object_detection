@@ -69,6 +69,7 @@ class TrainYolov5():
             Path(opt.save_dir), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
             opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
 
+
     def getSetVideos(self, setName, csv, fold):
         """returns the list of videos being used for each set in the fold
 
@@ -82,9 +83,9 @@ class TrainYolov5():
         """
         entries = csv.loc[(csv["Fold"] == fold) & (csv["Set"] == setName)]
         folders = entries["Folder"].unique()
-        return folders
-    
-    def loadData(self,fold,dataCSVFile):
+        return folders.tolist()
+
+    def loadData(self, fold,dataCSVFile):
         """reads the master csv and directs the data processessing
 
         Args:
@@ -97,7 +98,7 @@ class TrainYolov5():
         classMapping = self.writeDataToTextFile(dataCSVFile)
         self.writeYaml(classMapping, dataCSVFile, fold)
 
-    def writeYaml(self,classMapping,csv, fold):
+    def writeYaml(self, classMapping,csv, fold):
         """writes the data.yaml file for the fold
 
         Args:
@@ -105,20 +106,20 @@ class TrainYolov5():
             csv (dataframe): the master csv containing all the bounding box data
             fold (str): fold number
         """
-        outFile = os.path.join(self.dataPath, "data.yaml")
+        outFile = os.path.join(self.data, "data.yaml")
         trainFolders = self.getSetVideos("Train", csv, fold)
         valFolders = self.getSetVideos("Validation", csv, fold)
         testFolders = self.getSetVideos("Test", csv, fold)
-        trainPaths = {"train": trainFolders.tolist()}
-        valPaths = {"val": valFolders.tolist()}
-        testPaths = {"test": testFolders.tolist()}
-        classNames = classMapping.values()
-        names = {"names": classNames}
+        classNames = []
+        for i in classMapping.keys():
+            classNames.append(i)
         numClasses = len(classMapping)
-        nc = {"nc": numClasses}
-        data = [trainPaths, valPaths, testPaths, nc, names]
+        
+        lines = [f"train: {str(trainFolders)}\n",f"val: {str(valFolders)}\n",f"test: {str(testFolders)}\n",f"nc: {numClasses}\n",f"names: {classNames}\n"]
+
         with open(outFile, 'w') as yamlFile:
-            yaml.dump(data, yamlFile, default_flow_style=False)
+            for line in lines:
+                yamlFile.write(line)
 
 
     def writeDataToTextFile(self, datacsv):
@@ -136,6 +137,7 @@ class TrainYolov5():
             # file path of the desired txt file will be the folder plus the filename with .txt extension
             txtFilePath = os.path.join(datacsv['Folder'][i], (datacsv['FileName'][i].strip(".jpg") + ".txt"))
 
+            boundingBoxes = str(datacsv["Tool bounding box"][i])
             # turn the list of bounding boxes into a string
             strBoundBox = boundingBoxes.replace(" ", "")
             strBoundBox = strBoundBox.replace("'", "")
@@ -174,17 +176,15 @@ class TrainYolov5():
                     for i in range(0,len(bbox)):
                         if bbox[i] == '-1':
                             bbox[i] = 0
-                    try:
-                        x,y,w,h = self.convertCoordinates(self.size,bbox)
-                    except:
-                        print(bbox)
+
+                    x,y,w,h = self.convertCoordinates(bbox)
                     
                     className = boundingBoxDict["class"]
                     if className != "nothing":
                         if not className in classMapping.values():
                             # add classes to class mapping
                             classCount += 1
-                            classMapping[classCount] = className
+                            classMapping[className] = classCount
 
                         # put together all the bounding box data in YOLO form
                         classIndex = classMapping[boundingBoxDict["class"]]
@@ -192,16 +192,16 @@ class TrainYolov5():
 
             # do not overwrite any existing files
             if not os.path.exists(txtFilePath):
-                yoloFile = open((txtFilePath), 'w')
-                for line in lines:
-                    yoloFile.write("%s\n" % line)
+                with open((txtFilePath), 'w') as yoloFile:
+                    for line in lines:
+                        yoloFile.write("%s\n" % line)
             else:
                 pass
         
         # return the number of classes
         return classMapping
 
-    def convertCoordinates(self, box):
+    def convertCoordinates(self,box):
         """
         converts coordinates from (x1,y1,x2,y2) to YOLO format
         size: image size
@@ -225,7 +225,7 @@ class TrainYolov5():
     def train(self, hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
         self.loadData(opt.fold, opt.data)
-        data = self.
+        data = self.data
         callbacks.run('on_pretrain_routine_start')
 
         # Directories
