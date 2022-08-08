@@ -69,30 +69,61 @@ class TrainYolov5():
             Path(opt.save_dir), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
             opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
     
-    def loadData(self,fold,set):
-        entries = dataCSVFile.loc[(dataCSVFile["Fold"] == fold) & (dataCSVFile["Set"] == set)]
-        textFile = os.path.join("{}_Fold_{}".format(self.saveLocation, fold), set + ".txt")
-        labelFile = os.path.join("{}_Fold_{}".format(self.saveLocation, fold),  "classes.txt")
-        if not os.path.exists(textFile):
-            self.writeDataToTextFile(entries,textFile,labelFile)
-        return textFile,labelFile
+    def loadData(self,fold,set,dataCSVFile):
+        """_summary_
 
-    def writeDataToTextFile(self, datacsv,textFile,labelFile):
+        Args:
+            fold (_type_): _description_
+            set (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        entries = dataCSVFile.loc[(dataCSVFile["Fold"] == fold) & (dataCSVFile["Set"] == set)]
+        classMapping = self.writeDataToTextFile(entries)
+        self.writeYaml(entries, classMapping)
+
+    def writeYaml(self, entries, numClasses):
+        return
+
+
+    def writeDataToTextFile(self, datacsv):
+        """converts the data from DLL format into individual txt files for each directory
+
+        Args:
+            datacsv (_type_): _description_
+            textFile (_type_): _description_
+            labelFile (_type_): _description_
+        """
         labels = []
         trainLines = []
+        classMapping = dict()
+        classCount = -1
+
         for i in datacsv.index:
-            newLine = ''
-            filePath = os.path.join(datacsv["Folder"][i], datacsv["FileName"][i])
-            newLine += filePath
-            boundingBoxes = str(datacsv[labelName][i])
+            lines = []
+
+            # file path of the desired txt file will be the folder plus the filename with .txt extension
+            txtFilePath = os.path.join(datacsv['Folder'][i], (datacsv['FileName'][i].strip(".jpg") + ".txt"))
+
+            # turn the list of bounding boxes into a string
             strBoundBox = boundingBoxes.replace(" ", "")
             strBoundBox = strBoundBox.replace("'", "")
             strBoundBox = strBoundBox.replace("[", "")
             strBoundBox = strBoundBox.replace("]", "")
+
             boundingBoxes = []
+
+            # make sure the image has associated annotations
             if strBoundBox != "":
+
+                # convert the string bounding box into the invdividual labels
                 listBoundBox = strBoundBox.split("},{")
+
+                # iterate through each individual bounding box associated with the image
                 for boundingBox in listBoundBox:
+
+                    # convert the dictionary into a string
                     boundingBox = boundingBox.replace("{", "")
                     boundingBox = boundingBox.replace("}", "")
                     keyEntryPairs = boundingBox.split(",")
@@ -103,39 +134,44 @@ class TrainYolov5():
                             boundingBoxDict[key] = int(entry)
                         else:
                             boundingBoxDict[key] = entry
+
+                    # convert the coordinates to YOLO form
                     x1 = boundingBoxDict["xmin"]
                     x2 = boundingBoxDict["xmax"]
                     y1 = boundingBoxDict["ymin"]
                     y2 = boundingBoxDict["ymax"]
-                    xmin = min(x1, x2)
-                    xmax = max(x1, x2)
-                    ymin = min(y1, y2)
-                    ymax = max(y1, y2)
-                    if boundingBoxDict["class"] != "nothing":
-                        if not boundingBoxDict["class"] in labels:
-                            labels.append(boundingBoxDict["class"])
-                        bboxStr = " {},{},{},{},{}".format(boundingBoxDict["class"], xmin, xmax, ymin, ymax)
-                        newLine += bboxStr
-                newLine += '\n'
-                trainLines.append(newLine)
+                    bbox = [x1,x2,y1,y2]
+                    for i in range(0,len(bbox)):
+                        if bbox[i] == '-1':
+                            bbox[i] = 0
+                    try:
+                        x,y,w,h = self.convertCoordinates(self.size,bbox)
+                    except:
+                        print(bbox)
+                    
+                    className = boundingBoxDict["class"]
+                    if className != "nothing":
+                        if not className in classMapping.values():
+                            # add classes to class mapping
+                            classCount += 1
+                            classMapping[classCount] = className
 
-        trainLines[-1] = trainLines[-1].replace('\n', '')
-        labels = sorted(labels)
-        for i in range(len(trainLines)):
-            for j in range(len(labels)-1,-1,-1):
-                trainLines[i] = trainLines[i].replace(labels[j],str(j))
+                        # put together all the bounding box data in YOLO form
+                        classIndex = classMapping[boundingBoxDict["class"]]
+                        lines.append(f'{classIndex} {x} {y} {w} {h}')
 
-        with open(textFile, "w") as f:
-            f.writelines(trainLines)
+            # do not overwrite any existing files
+            if not os.path.exists(txtFilePath):
+                yoloFile = open((txtFilePath), 'w')
+                for line in lines:
+                    yoloFile.write("%s\n" % line)
+            else:
+                pass
+        
+        # return the number of classes
+        return classMapping
 
-        labels = [i+"\n" for i in labels]
-        labels[-1] = labels[-1].replace("\n","")
-
-        if not os.path.exists(labelFile):
-            with open(labelFile,"w") as f:
-                f.writelines(labels)
-
-    def convert_coordinates(self, box):
+    def convertCoordinates(self, box):
         """
         converts coordinates from (x1,y1,x2,y2) to YOLO format
         size: image size
@@ -155,37 +191,9 @@ class TrainYolov5():
         y = y*dh
         h = h*dh
         return (x,y,w,h)
-
-    def copyData(self, set, txtFile):
-        # set refers to train, val, or test
-        dataPath = os.path.join(self.saveLocation, f"dataset/{set}")
-        if not os.path.exists(dataPath):
-            os.makedirs(dataPath)
-
-        data = open(txtFile, 'r')
-        dataEntries = data.readlines()
-
-        for entry in dataEntries:
-            boundingBoxData = []
-            entry = entry.split(' ')
-            numBoxes = len(entry) - 1
-            filePath = entry[0]
-            imgName = os.path.basename(filePath)
-
-            for bbox in range (1,numBoxes):
-                classIndex = bbox[0]
-                boundingBoxCoords = bbox[1:]
-                x,y,w,h = self.convert_coordinates(self.size, boundingBoxCoords)
-                boundingBoxData.append(f'{classIndex} {x} {y} {w} {h}')
-            
-            yoloFileName = imgName.strip('.jpg') + '.txt'
-            yoloFile = open(os.path.join(dataPath, yoloFileName), 'w')
-            for line in boundingBoxData:
-                yoloFile.write("%s\n" % line)
-            shutil.copyfile(filePath, os.path.join(dataPath, imgName))
-
         
     def train(self, hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
+
         callbacks.run('on_pretrain_routine_start')
 
         # Directories
@@ -224,11 +232,11 @@ class TrainYolov5():
         cuda = device.type != 'cpu'
         init_seeds(opt.seed + 1 + RANK, deterministic=True)
         with torch_distributed_zero_first(LOCAL_RANK):
-            data_dict = data_dict or check_dataset(data)  # check if None
+            data_dict = data_dict or check_dataset(opt.data)  # check if None
         train_path, val_path = data_dict['train'], data_dict['val']
         nc = 1 if self.single_cls else int(data_dict['nc'])  # number of classes
         names = ['item'] if self.single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
-        assert len(names) == nc, f'{len(names)} names found for nc={nc} dataset in {data}'  # check
+        assert len(names) == nc, f'{len(names)} names found for nc={nc} dataset in {opt.data}'  # check
         is_coco = isinstance(val_path, str) and val_path.endswith('coco/val2017.txt')  # COCO dataset
 
         # Model
@@ -334,7 +342,7 @@ class TrainYolov5():
                                                 shuffle=True)
         mlc = int(np.concatenate(dataset.labels, 0)[:, 0].max())  # max label class
         nb = len(train_loader)  # number of batches
-        assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {data}. Possible class labels are 0-{nc - 1}'
+        assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {opt.data}. Possible class labels are 0-{nc - 1}'
 
         # Process 0
         if RANK in {-1, 0}:
