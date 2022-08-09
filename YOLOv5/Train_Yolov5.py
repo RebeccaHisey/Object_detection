@@ -183,7 +183,7 @@ class TrainYolov5():
                     
                     className = boundingBoxDict["class"]
                     if className != "nothing":
-                        if not className in classMapping.values():
+                        if not className in classMapping.keys():
                             # add classes to class mapping
                             classCount += 1
                             classMapping[className] = classCount
@@ -193,12 +193,12 @@ class TrainYolov5():
                         lines.append(f'{classIndex} {x} {y} {w} {h}')
 
             # do not overwrite any existing files
-            if not os.path.exists(txtFilePath):
-                with open((txtFilePath), 'w') as yoloFile:
-                    for line in lines:
-                        yoloFile.write("%s\n" % line)
-            else:
-                pass
+            # if not os.path.exists(txtFilePath):
+            with open((txtFilePath), 'w') as yoloFile:
+                for line in lines:
+                    yoloFile.write("%s\n" % line)
+            # else:
+            #     pass
         
         # return the number of classes
         return classMapping
