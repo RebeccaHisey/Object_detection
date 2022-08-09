@@ -206,7 +206,6 @@ class TrainYolov5():
     def convertCoordinates(self,box):
         """
         converts coordinates from (x1,y1,x2,y2) to YOLO format
-        size: image size
         box: (x1,y1,x2,y2)
         """
         for i in range(0,len(box)):
