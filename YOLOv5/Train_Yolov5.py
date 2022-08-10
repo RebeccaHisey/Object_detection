@@ -66,8 +66,8 @@ class TrainYolov5():
 
     def __init__(self):
         opt = self.parse_opt(True)
-        self.save_dir, self.epochs, self.batch_size, self.weights, self.single_cls, self.evolve, self.data, self.cfg, self.resume, self.noval, self.nosave, self.workers, self.freeze, self.size= \
-            Path(opt.save_dir), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data_csv_file, opt.cfg, \
+        self.save_location, self.epochs, self.batch_size, self.weights, self.single_cls, self.evolve, self.data, self.cfg, self.resume, self.noval, self.nosave, self.workers, self.freeze, self.size= \
+            Path(opt.save_location), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data_csv_file, opt.cfg, \
             opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.img_size
 
     def getSetVideos(self, setName, csv, fold):
@@ -95,6 +95,8 @@ class TrainYolov5():
         Returns:
             _type_: _description_
         """
+        if not os.path.exists(self.save_location):
+            os.path.mkdirs(self.save_location)
         dataCSVFile = pandas.read_csv(dataCSVFile)
         classMapping = self.writeDataToTextFile(dataCSVFile)
         self.writeYaml(classMapping, dataCSVFile, fold)
@@ -107,7 +109,7 @@ class TrainYolov5():
             csv (dataframe): the master csv containing all the bounding box data
             fold (str): fold number
         """
-        self.outFilePath = os.path.join(self.save_dir, "data.yaml")
+        self.outFilePath = os.path.join(self.save_location, "data.yaml")
         outFile = os.path.join(self.outFilePath)
         trainFolders = self.getSetVideos("Train", csv, fold)
         valFolders = self.getSetVideos("Validation", csv, fold)
@@ -225,13 +227,12 @@ class TrainYolov5():
         
     def train(self, hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
 
-        fold = 0
-        self.loadData(fold, opt.data_csv_file)
+        self.loadData(self.fold, opt.data_csv_file)
         self.data = self.outFilePath
         callbacks.run('on_pretrain_routine_start')
 
         # Directories
-        w = self.save_dir / 'weights'  # weights dir
+        w = self.save_location / 'weights'  # weights dir
         (w.parent if self.evolve else w).mkdir(parents=True, exist_ok=True)  # make dir
         last, best = w / 'last.pt', w / 'best.pt'
 
@@ -243,15 +244,15 @@ class TrainYolov5():
 
         # Save run settings
         if not self.evolve:
-            with open(self.save_dir / 'hyp.yaml', 'w') as f:
+            with open(self.save_location / 'hyp.yaml', 'w') as f:
                 yaml.safe_dump(hyp, f, sort_keys=False)
-            with open(self.save_dir / 'opt.yaml', 'w') as f:
+            with open(self.save_location / 'opt.yaml', 'w') as f:
                 yaml.safe_dump(vars(opt), f, sort_keys=False)
 
         # Loggers
         data_dict = None
         if RANK in {-1, 0}:
-            loggers = Loggers(self.save_dir, self.weights, opt, hyp, LOGGER)  # loggers instance
+            loggers = Loggers(self.save_location, self.weights, opt, hyp, LOGGER)  # loggers instance
             # if loggers.wandb:
             #     data_dict = loggers.wandb.data_dict
             #     if resume:
@@ -399,7 +400,7 @@ class TrainYolov5():
                 # cf = torch.bincount(c.long(), minlength=nc) + 1.  # frequency
                 # model._initialize_biases(cf.to(device))
                 if plots:
-                    plot_labels(labels, names, self.save_dir)
+                    plot_labels(labels, names, self.save_location)
 
                 # Anchors
                 if not opt.noautoanchor:
@@ -437,7 +438,7 @@ class TrainYolov5():
         callbacks.run('on_train_start')
         LOGGER.info(f'Image sizes {imgsz} train, {imgsz} val\n'
                     f'Using {train_loader.num_workers * WORLD_SIZE} dataloader workers\n'
-                    f"Logging results to {colorstr('bold', self.save_dir)}\n"
+                    f"Logging results to {colorstr('bold', self.save_location)}\n"
                     f'Starting training for {self.epochs} epochs...')
         for epoch in range(start_epoch, self.epochs):  # epoch ------------------------------------------------------------------
             callbacks.run('on_train_epoch_start')
@@ -511,7 +512,7 @@ class TrainYolov5():
                     mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
                     mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'  # (GB)
                     pbar.set_description(('%10s' * 2 + '%10.4g' * 5) %
-                                        (f'{self.epoch}/{self.epochs - 1}', mem, *mloss, targets.shape[0], imgs.shape[-1]))
+                                        (f'{self.epochs}/{self.epochs - 1}', mem, *mloss, targets.shape[0], imgs.shape[-1]))
                     callbacks.run('on_train_batch_end', ni, model, imgs, targets, paths, plots)
                     if callbacks.stop_training:
                         return
@@ -533,7 +534,7 @@ class TrainYolov5():
                                             model=ema.ema,
                                             single_cls=self.single_cls,
                                             dataloader=val_loader,
-                                            save_dir=self.save_dir,
+                                            save_location=self.save_location,
                                             plots=False,
                                             callbacks=callbacks,
                                             compute_loss=compute_loss)
@@ -593,7 +594,7 @@ class TrainYolov5():
                             iou_thres=0.65 if is_coco else 0.60,  # best pycocotools results at 0.65
                             single_cls=self.single_cls,
                             dataloader=val_loader,
-                            save_dir=self.save_dir,
+                            save_location=self.save_location,
                             save_json=is_coco,
                             verbose=True,
                             plots=plots,
@@ -645,7 +646,8 @@ class TrainYolov5():
         parser.add_argument('--save-period', type=int, default=-1, help='Save checkpoint every x epochs (disabled if < 1)')
         parser.add_argument('--seed', type=int, default=0, help='Global training seed')
         parser.add_argument('--local_rank', type=int, default=-1, help='Automatic DDP Multi-GPU argument, do not modify')
-        parser.add_argument('--save_dir', type=str, default = '', help='where to save weights and training results')
+        parser.add_argument('--save_location', type=str, default = '', help='where to save weights and training results')
+        parser.add_argument('--fold', type=int, default = 0, help='fold number to run')
         # Weights & Biases arguments
         parser.add_argument('--entity', default=None, help='W&B: Entity')
         parser.add_argument('--upload_dataset', nargs='?', const=True, default=False, help='W&B: Upload data, "val" option')
@@ -681,7 +683,7 @@ class TrainYolov5():
                 opt.exist_ok, opt.resume = opt.resume, False  # pass resume to exist_ok and disable resume
             if opt.name == 'cfg':
                 opt.name = Path(opt.cfg).stem  # use model.yaml as name
-            opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
+            opt.save_location = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
 
         # DDP mode
         device = select_device(opt.device, batch_size=opt.batch_size)
@@ -741,9 +743,9 @@ class TrainYolov5():
                 hyp = yaml.safe_load(f)  # load hyps dict
                 if 'anchors' not in hyp:  # anchors commented in hyp.yaml
                     hyp['anchors'] = 3
-            opt.noval, opt.nosave, save_dir = True, True, Path(opt.save_dir)  # only val/save final epoch
+            opt.noval, opt.nosave, save_location = True, True, Path(opt.save_location)  # only val/save final epoch
             # ei = [isinstance(x, (int, float)) for x in hyp.values()]  # evolvable indices
-            evolve_yaml, evolve_csv = save_dir / 'hyp_evolve.yaml', save_dir / 'evolve.csv'
+            evolve_yaml, evolve_csv = save_location / 'hyp_evolve.yaml', save_location / 'evolve.csv'
             if opt.bucket:
                 os.system(f'gsutil cp gs://{opt.bucket}/evolve.csv {evolve_csv}')  # download evolve.csv if exists
 
@@ -783,12 +785,12 @@ class TrainYolov5():
                 results = self.train(hyp.copy(), opt, device, callbacks)
                 callbacks = Callbacks()
                 # Write mutation results
-                print_mutation(results, hyp.copy(), save_dir, opt.bucket)
+                print_mutation(results, hyp.copy(), save_location, opt.bucket)
 
             # Plot results
             plot_evolve(evolve_csv)
             LOGGER.info(f'Hyperparameter evolution finished {opt.evolve} generations\n'
-                        f"Results saved to {colorstr('bold', save_dir)}\n"
+                        f"Results saved to {colorstr('bold', save_location)}\n"
                         f'Usage example: $ python train.py --hyp {evolve_yaml}')
 
 
