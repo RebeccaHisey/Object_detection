@@ -97,7 +97,7 @@ class TrainYolov5():
             _type_: _description_
         """
         if not os.path.exists(self.save_location):
-            os.path.mkdirs(self.save_location)
+            os.makedirs(self.save_location)
         dataCSVFile = pandas.read_csv(dataCSVFile)
         classMapping = self.writeDataToTextFile(dataCSVFile)
         self.writeYaml(classMapping, dataCSVFile, fold)
@@ -539,7 +539,7 @@ class TrainYolov5():
                                                model=ema.ema,
                                                single_cls=self.single_cls,
                                                dataloader=val_loader,
-                                               save_location=self.save_location,
+                                               save_dir=self.save_location,
                                                plots=False,
                                                callbacks=callbacks,
                                                compute_loss=compute_loss)
@@ -599,7 +599,7 @@ class TrainYolov5():
                             iou_thres=0.65 if is_coco else 0.60,  # best pycocotools results at 0.65
                             single_cls=self.single_cls,
                             dataloader=val_loader,
-                            save_location=self.save_location,
+                            save_dir=self.save_location,
                             save_json=is_coco,
                             verbose=True,
                             plots=plots,
@@ -622,7 +622,7 @@ class TrainYolov5():
                             default="C:/Users/olivi/OneDrive/Documents/Perk/Labeling/bboxes/ALL-CSVS (for yolov5 test)/data.yaml", help='dataset.yaml path')
         parser.add_argument('--hyp', type=str, default=ROOT /
                             'data/hyps/hyp.scratch-low.yaml', help='hyperparameters path')
-        parser.add_argument('--epochs', type=int, default=300)
+        parser.add_argument('--epochs', type=int, default=1)
         parser.add_argument('--batch-size', type=int, default=16,
                             help='total batch size for all GPUs, -1 for autobatch')
         parser.add_argument('--imgsz', '--img', '--img-size', type=int,
