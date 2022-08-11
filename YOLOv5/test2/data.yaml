@@ -1,0 +1,5 @@
+train: ['C:/Users/Olivia/OneDrive/Documents/Perk/downloads folder/Training_Data/Training_Data\\AN02-20210107-130959']
+val: ['C:/Users/Olivia/OneDrive/Documents/Perk/downloads folder/Training_Data/Training_Data\\AN02-20210107-130959']
+test: ['C:/Users/Olivia/OneDrive/Documents/Perk/downloads folder/Training_Data/Training_Data\\AN02-20210107-130959']
+nc: 7
+names: ['ultrasound', 'guidewire', 'dilator', 'anesthetic', 'catheter', 'guidewire_casing', 'syringe']

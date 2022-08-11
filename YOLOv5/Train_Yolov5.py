@@ -195,13 +195,9 @@ class TrainYolov5():
                         classIndex = classMapping[boundingBoxDict["class"]]
                         lines.append(f'{classIndex} {x} {y} {w} {h}')
 
-            # do not overwrite any existing text files
-            if not os.path.exists(txtFilePath):
-                with open((txtFilePath), 'w') as yoloFile:
-                    for line in lines:
-                        yoloFile.write("%s\n" % line)
-            else:
-                pass
+            with open((txtFilePath), 'w') as yoloFile:
+                for line in lines:
+                    yoloFile.write("%s\n" % line)
 
         # return the number of classes
         return classMapping
