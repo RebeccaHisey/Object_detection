@@ -175,7 +175,8 @@ class BatchGenerator(Sequence):
                 instance_count += 1
                 del img
         self.batch_num +=1
-        gc.collect()
+        if self.batch_num%100==0:
+            gc.collect()
         return [x_batch, t_batch, yolo_1, yolo_2, yolo_3], [dummy_yolo_1, dummy_yolo_2, dummy_yolo_3]
 
     def _get_net_size(self, idx):

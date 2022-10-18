@@ -72,7 +72,7 @@ def evaluate(model,
             if pred_boxes[j]!=[] and pred_boxes[j][-1]>0:
                 bbox = {"class":pred_labels[j],"xmin":int(pred_boxes[j][0]),"ymin":int(pred_boxes[j][1]),"xmax":int(pred_boxes[j][2]),"ymax":int(pred_boxes[j][3]),"conf":float(pred_boxes[j][4])}
                 bboxList.append(bbox)
-        resultsCSV = resultsCSV.append({"FilePath":generator.instances[i]["filename"],"Tool bounding box":bboxList},ignore_index=True)
+        resultsCSV = pandas.concat([resultsCSV,pandas.DataFrame({"FilePath":generator.instances[i]["filename"],"Tool bounding box":bboxList})])
 
         # copy detections to all_detections
         for label in range(generator.num_classes()):

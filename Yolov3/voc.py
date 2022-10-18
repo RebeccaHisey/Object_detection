@@ -86,6 +86,8 @@ def parse_voc_annotation_deepLearnLive(datasetTextFile, cache_name, labels=[]):
                     filepath, bboxes = strLine.split(" ",1)
                     bboxes = bboxes.split(" ")
                     img['filename'] = filepath
+                    if 'bD' in filepath:
+                        img['filename'] = filepath.replace('bD','D')
                     # img['width'] = int(width)
                     # img['height'] = int(height)
                     for bbox in bboxes:

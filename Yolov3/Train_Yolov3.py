@@ -76,7 +76,7 @@ class Train_Yolov3:
                     xmax = max(x1, x2)
                     ymin = min(y1, y2)
                     ymax = max(y1, y2)
-                    if boundingBoxDict["class"] != "nothing":
+                    if boundingBoxDict["class"] != "nothing" and (self.selectedLabels==None or boundingBoxDict["class"] in self.selectedLabels):
                         #classnum = [i for i in range(len(labels)) if labels[i] == boundingBoxDict["class"]][0]
                         if not boundingBoxDict["class"] in labels:
                             labels.append(boundingBoxDict["class"])
@@ -201,7 +201,7 @@ class Train_Yolov3:
             log_dir=tensorboard_logs,
             write_graph=True,
             write_images=True,
-            update_freq="batch"
+            update_freq="epoch"
         )
         progBar = ProgbarLogger(count_mode='steps')
         return [early_stop, checkpoint, reduce_on_plateau, tensorboard]
@@ -282,6 +282,7 @@ class Train_Yolov3:
         self.numFolds = self.dataCSVFile["Fold"].max() + 1
         self.labelName = "Tool bounding box"
         config_path = FLAGS.conf
+        self.selectedLabels = ["ultrasound","syringe"]
         balanceData = False
 
         with open(config_path) as config_buffer:

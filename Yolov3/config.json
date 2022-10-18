@@ -2,7 +2,7 @@
     "model" : {
         "min_input_size":       224,
         "max_input_size":       480,
-        "anchors":              [24,34, 46,84, 68,185, 116,286, 122,97, 171,180, 214,327, 326,193, 359,359],
+        "anchors":              [35,106, 58,32, 59,59, 69,202, 111,108, 132,181, 143,53, 197,167, 228,327],
         "labels":               ["kangaroo"]
     },
 
@@ -13,7 +13,7 @@
 
         "train_times":          8,
         "batch_size":           4,
-        "learning_rate":        1e-4,
+        "learning_rate":        1e-3,
         "nb_epochs":            100,
         "warmup_epochs":        3,
         "ignore_thresh":        0.5,
