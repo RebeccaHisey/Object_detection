@@ -54,7 +54,7 @@ FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
-ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
+#ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 # from utils.loggers.wandb.wandb_utils import check_wandb_resume
 
@@ -70,6 +70,7 @@ class TrainYolov5():
         self.save_location, self.epochs, self.batch_size, self.weights, self.single_cls, self.evolve, self.data, self.cfg, self.resume, self.noval, self.nosave, self.workers, self.freeze, self.size, self.fold = \
             Path(opt.save_location), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data_csv_file, opt.cfg, \
             opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.img_size, opt.fold
+
 
     def getSetVideos(self, setName, csv, fold):
         """returns the list of videos being used for each set in the fold
@@ -223,7 +224,6 @@ class TrainYolov5():
         return (x, y, w, h)
 
     def train(self, hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
-
         self.loadData(self.fold, opt.data_csv_file)
         self.data = self.outFilePath
         callbacks.run('on_pretrain_routine_start')
@@ -265,7 +265,7 @@ class TrainYolov5():
         init_seeds(opt.seed + 1 + RANK, deterministic=True)
         with torch_distributed_zero_first(LOCAL_RANK):
             data_dict = data_dict or check_dataset(self.data)  # check if None
-        train_path, val_path = data_dict['train'], data_dict['val']
+        train_path, val_path, test_path = data_dict['train'], data_dict['val'], data_dict['test']
         nc = 1 if self.single_cls else int(data_dict['nc'])  # number of classes
         names = ['item'] if self.single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
         assert len(names) == nc, f'{len(names)} names found for nc={nc} dataset in {self.data}'  # check
@@ -393,6 +393,7 @@ class TrainYolov5():
                                            pad=0.5,
                                            prefix=colorstr('val: '))[0]
 
+
             if not self.resume:
                 labels = np.concatenate(dataset.labels, 0)
                 # c = torch.tensor(labels[:, 0])  # classes
@@ -513,7 +514,7 @@ class TrainYolov5():
                     mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
                     mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'  # (GB)
                     pbar.set_description(('%10s' * 2 + '%10.4g' * 5) %
-                                         (f'{self.epochs}/{self.epochs - 1}', mem, *mloss, targets.shape[0], imgs.shape[-1]))
+                                         (f'{epoch}/{self.epochs - 1}', mem, *mloss, targets.shape[0], imgs.shape[-1]))
                     callbacks.run('on_train_batch_end', ni, model, imgs, targets, paths, plots)
                     if callbacks.stop_training:
                         return
@@ -586,15 +587,31 @@ class TrainYolov5():
                 if f.exists():
                     strip_optimizer(f)  # strip optimizers
                     if f is best:
-                        LOGGER.info(f'\nValidating {f}...')
+                        LOGGER.info(f'\nTesting {f}...')
                         results, _, _ = val.run(
                             data_dict,
                             batch_size=self.batch_size // WORLD_SIZE * 2,
                             imgsz=imgsz,
+                            task='val',
                             model=attempt_load(f, device).half(),
                             iou_thres=0.65 if is_coco else 0.60,  # best pycocotools results at 0.65
                             single_cls=self.single_cls,
                             dataloader=val_loader,
+                            save_dir=self.save_location,
+                            save_json=is_coco,
+                            verbose=True,
+                            plots=plots,
+                            callbacks=callbacks,
+                            compute_loss=compute_loss)  # val best model with plots
+                        test_results, _, _ = val.run(
+                            data_dict,
+                            weights=self.save_location / 'weights' / 'best.pt',
+                            batch_size=self.batch_size // WORLD_SIZE * 2,
+                            imgsz=imgsz,
+                            task='test',
+                            model=attempt_load(f, device).half(),
+                            iou_thres=0.65 if is_coco else 0.60,  # best pycocotools results at 0.65
+                            single_cls=self.single_cls,
                             save_dir=self.save_location,
                             save_json=is_coco,
                             verbose=True,
@@ -612,7 +629,7 @@ class TrainYolov5():
     def parse_opt(self, known=False):
         parser = argparse.ArgumentParser()
         parser.add_argument('--weights', type=str, default=ROOT / 'yolov5s.pt', help='initial weights path')
-        parser.add_argument('--img_size', type=list, default=[640, 480], help='size of your training images')
+        parser.add_argument('--img_size', type=list, default=[640,480], help='size of your training images')
         parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
         parser.add_argument('--data_csv_file', type=str,
                             default="C:/Users/olivi/OneDrive/Documents/Perk/Labeling/bboxes/ALL-CSVS (for yolov5 test)/data.yaml", help='dataset.yaml path')
@@ -634,7 +651,7 @@ class TrainYolov5():
         parser.add_argument('--cache', type=str, nargs='?', const='ram',
                             help='--cache images in "ram" (default) or "disk"')
         parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
-        parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+        parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
         parser.add_argument('--multi-scale', action='store_true', help='vary img-size +/- 50%%')
         parser.add_argument('--single-cls', action='store_true', help='train multi-class data as single-class')
         parser.add_argument('--optimizer', type=str, choices=['SGD', 'Adam', 'AdamW'], default='SGD', help='optimizer')
@@ -670,6 +687,7 @@ class TrainYolov5():
         return opt
 
     def main(self, opt, callbacks=Callbacks()):
+
         # Checks
         if RANK in {-1, 0}:
             print_args(vars(opt))
@@ -721,7 +739,7 @@ class TrainYolov5():
         else:
             # Hyperparameter evolution metadata (mutation scale 0-1, lower_limit, upper_limit)
             meta = {
-                'lr0': (1, 1e-5, 1e-1),  # initial learning rate (SGD=1E-2, Adam=1E-3)
+                'lr0': (1, 1e-3, 1e-1),  # initial learning rate (SGD=1E-2, Adam=1E-3)
                 'lrf': (1, 0.01, 1.0),  # final OneCycleLR learning rate (lr0 * lrf)
                 'momentum': (0.3, 0.6, 0.98),  # SGD momentum/Adam beta1
                 'weight_decay': (1, 0.0, 0.001),  # optimizer weight decay
@@ -807,10 +825,22 @@ class TrainYolov5():
 
     def run(self, **kwargs):
         # Usage: import train; train.run(data='coco128.yaml', imgsz=320, weights='yolov5m.pt')
-        opt = self.parse_opt(True)
+        opt= self.parse_opt(True)
         for k, v in kwargs.items():
             setattr(opt, k, v)
-        self.main(opt)
+        datacsv = pandas.read_csv(opt.data_csv_file)
+        numFolds = datacsv["Fold"].max() + 1
+        print(type(opt.save_location))
+        original_save_dir = opt.save_location
+        for fold in range(0,numFolds):
+            opt = self.parse_opt(True)
+            for k, v in kwargs.items():
+                setattr(opt, k, v)
+            setattr(opt,"fold",fold)
+            setattr(opt,"save_location",Path("{}_Fold_{}".format(original_save_dir,fold)))
+            self.save_location = Path("{}_Fold_{}".format(original_save_dir,fold))
+            self.fold=fold
+            self.main(opt)
         return opt
 
 
