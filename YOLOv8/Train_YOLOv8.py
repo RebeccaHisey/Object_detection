@@ -290,6 +290,45 @@ def getClassMapping(datacsv,labelName):
     class_mapping = dict(zip([i for i in range(len(class_names))],class_names))
     return class_mapping
 
+def calculate_dice(ground_truth_segmentation,predicted_segmentation):
+    intersection = numpy.sum(numpy.where(ground_truth_segmentation+predicted_segmentation == 2,1,0))
+    union = numpy.sum(numpy.where((ground_truth_segmentation==1)  | (predicted_segmentation == 1),1,0))
+    return (2 * intersection) / (numpy.sum(numpy.where(ground_truth_segmentation == 1, 1, 0)) + numpy.sum(
+        numpy.where(predicted_segmentation == 1, 1, 0)))
+    if union > 0:
+        return (2*intersection)/(numpy.sum(numpy.where(ground_truth_segmentation==1,1,0))+numpy.sum(numpy.where(predicted_segmentation == 1,1,0)))
+    else:
+        return None
+
+def eval_segmentations(data,class_mapping,yolo_model,labelName):
+    all_dices = dict(zip([class_mapping[key] for key in class_mapping],[[] for key in class_mapping]))
+    for i in data.index:
+        filePath = os.path.join(data["Folder"][i],data["FileName"][i])
+        gt_seg = cv2.imread(os.path.join(data["Folder"][i],data[labelName][i]),cv2.IMREAD_GRAYSCALE)
+        yoloPredictions = [x for x in yolo_model.predict(filePath)]
+        for pred in yoloPredictions:
+            pred_masks = pred.masks.xy
+            class_nums = pred.boxes.cls.cpu().numpy()
+            im_shape = gt_seg.shape
+            unique_classes = sorted(numpy.unique(class_nums))
+            for class_num in unique_classes:
+                mask = numpy.zeros((im_shape[0],im_shape[1],3))
+                gt_seg_class = numpy.where(gt_seg==class_num,1,0)
+                for j in range(len(pred_masks)):
+                    if class_nums[j]==class_num:
+                        mask = cv2.fillPoly(img=numpy.int32(mask),pts=[numpy.int32(pred_masks[j])],color=(255,0,0))
+                mask = numpy.where(mask[:,:,0]==255,1,0)
+                dice = calculate_dice(gt_seg_class,mask)
+                if dice != None:
+                    all_dices[class_mapping[int(class_num)]].append(dice)
+    avg_dice = {}
+    for key in all_dices:
+        if len(all_dices[key])>0:
+            avg_dice[key] = float(sum(all_dices[key])/len(all_dices[key]))
+    print(avg_dice)
+    gc.collect()
+    return avg_dice
+
 def saveMetrics(metrics,class_mapping,foldDir,mode):
     if mode=='detect':
         class_indexes = metrics.box.ap_class_index
@@ -329,7 +368,7 @@ def main(args):
         if not os.path.exists(foldDir):
             os.mkdir(foldDir)
         with open(os.path.join(foldDir,"config.yaml"),"w") as f:
-            yaml.dump(class_mapping,f)
+            yaml.dump(config,f)
         dataPath = prepareData(dataCSVFile, args.label_name, fold,class_mapping,foldDir,args.include_blank,args.output_mode)
         yolo = YOLOv8(args.output_mode)
         if not os.path.exists(os.path.join(foldDir,"train/weights/best.pt")):
@@ -353,7 +392,11 @@ def main(args):
                             device=args.device,
                             iou=0.45,
                             conf=0.25)
-        saveMetrics(metrics,class_mapping,foldDir)
+        saveMetrics(metrics,class_mapping,foldDir,args.output_mode)
+        if args.output_mode == 'segment':
+            avg_dice = eval_segmentations(dataCSVFile.loc[(dataCSVFile["Fold"]==fold) & (dataCSVFile["Set"]=="Test")],class_mapping,model,args.label_name)
+            with open(os.path.join(foldDir, "test_dice.yaml"), "w") as f:
+                yaml.dump(avg_dice, f)
         del metrics
         del model
         del yolo
