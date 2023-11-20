@@ -84,13 +84,25 @@ def get_arguments():
         default=True,
         help='Balance samples for training'
     )
+    parser.add_argument(
+        '--output_mode',
+        type=str,
+        default='detect',
+        help='Which type of head to use for the YOLO model. One of: detect,segment'
+    )
+    parser.add_argument(
+        '--label_name',
+        type=str,
+        default='Tissue',
+        help='Name of the dataframe column containing labels'
+    )
     return parser
 
 def xyxy_to_yolo(img_size,bbox):
-    x_centre = ((bbox["xmin"] + bbox["xmax"]) / 2) / img_size[1]
-    y_centre = ((bbox["ymin"] + bbox["ymax"]) / 2) / img_size[0]
-    width = ((bbox["xmax"] - bbox["xmin"])) / img_size[1]
-    height = ((bbox["ymax"] - bbox["ymin"])) / img_size[0]
+    x_centre = ((int(bbox["xmin"]) + int(bbox["xmax"])) / 2) / img_size[1]
+    y_centre = ((int(bbox["ymin"]) + int(bbox["ymax"])) / 2) / img_size[0]
+    width = ((int(bbox["xmax"]) - int(bbox["xmin"]))) / img_size[1]
+    height = ((int(bbox["ymax"]) - int(bbox["ymin"]))) / img_size[0]
     return x_centre, y_centre, width, height
 
 def getMaxClassCounts(data):
@@ -115,7 +127,7 @@ def determineNumDuplicatesNeeded(class_counts,max_count):
         numDuplicates[key] = fraction_max
     return numDuplicates
 
-def writeLabelTextFiles(data,foldDir,inverted_class_mapping,include_blank=True,balance = True):
+def writeLabelTextFiles(data, labelName, foldDir,inverted_class_mapping,include_blank=True,balance = True):
     linesToWrite = []
     class_counts, maxCount = getMaxClassCounts(data)
     foundCounts = dict(zip([key for key in class_counts],[0 for key in class_counts]))
@@ -129,7 +141,7 @@ def writeLabelTextFiles(data,foldDir,inverted_class_mapping,include_blank=True,b
         if (i- min(data.index)) %1000 == 0:
             print("\tparsed {}/{} samples".format(i- min(data.index),len(data.index)))
         filePath = os.path.join(data["Folder"][i],data["FileName"][i])
-        bboxes = eval(data["Tool bounding box"][i])
+        bboxes = eval(data[labelName][i])
         classNames = [bbox["class"] for bbox in bboxes]
         if len(classNames)>0:
             maxDuplicates = max([numDuplicates[class_name] for class_name in classNames])
@@ -152,7 +164,6 @@ def writeLabelTextFiles(data,foldDir,inverted_class_mapping,include_blank=True,b
                 x_centre, y_centre, width, height = xyxy_to_yolo(img_shape,bbox)
                 class_name = inverted_class_mapping[bbox["class"]]
                 line += "{} {} {} {} {}\n".format(class_name,x_centre,y_centre,width,height)
-            #line = line.split("\n",-1)
             with open(labelFilePath, "w") as f:
                 f.write(line)
     print(foundCounts)
@@ -160,6 +171,72 @@ def writeLabelTextFiles(data,foldDir,inverted_class_mapping,include_blank=True,b
     filePath = os.path.join(foldDir,fileName)
     with open(filePath,"w") as f:
         f.writelines(linesToWrite)
+
+def writeSegmentationLabelToTextFile(data,foldDir,labelName):
+    linesToWrite = []
+    for i in trainingCSV.index:
+        segName = data[labelName][i]
+        imgName = data["FileName"][i]
+        folder_path = data["Folder"][i]
+        # Read in segmentation and image
+        if os.path.exists(os.path.join(folder_path, segName)):
+            linesToWrite.append(os.path.join(folder_path,imgName))
+            seg = cv2.imread(os.path.join(folder_path, segName), cv2.IMREAD_GRAYSCALE)
+
+            # Convert labelmap to coordinates
+            coords = labelmap_to_contour(seg)
+
+            # Create and write to text file
+            fileName,fileExtension = imgName.split(".")
+            textFileName = "{}.txt".format(fileName)
+            textFilePath = os.path.join(folder_path,textFileName)
+            with open(textFilePath, 'w') as textFile:
+                textFile.write(str(coords))
+    fileName = "{}.txt".format(data["Set"][data.index[0]])
+    filePath = os.path.join(foldDir, fileName)
+    with open(filePath, "w") as f:
+        f.writelines(linesToWrite)
+
+
+def labelmap_to_contour(labelmap):
+    contour_coordinates_list = []
+
+    present_classes = np.unique(labelmap)
+    img_shape = labelmap.shape
+
+    for class_label in present_classes:
+
+        if class_label == 0:
+            continue
+        # Create a binary mask for the current class
+        class_mask = np.uint8(labelmap == class_label)
+
+        # Find contours in the binary mask
+        num_components, labels, stats, centroids = cv2.connectedComponentsWithStats(class_mask, 8, cv2.CV_32S)
+        sizes = np.array(stats[:, -1])
+        maxSize = np.max(sizes)
+        currentIndex = 0
+
+        # Loop through all components except background
+        for i in range(num_components):
+            if sizes[i] != maxSize:
+                newImage = np.zeros(class_mask.shape)
+                newImage[labels == i] = 1
+                newImage = newImage.astype("uint8")
+
+                contours, _ = cv2.findContours(newImage, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+                maxindex = np.argmax([contours[i].shape[0] for i in range(len(contours))])
+                contours = np.asarray(contours[maxindex])
+
+                contour_string = "{}"
+                for contour in contours:
+                    for point in contour:
+                        x = point[0] / img_shape[1]
+                        y = point[1] / img_shape[0]
+                        contour_string += " {} {}"
+                contour_string+="\n"
+                contour_coordinates_list.append(contour_coordinates)
+    return contour_coordinates_list
 
 def invert_class_mapping(class_mapping):
     inverted_mapping = {}
@@ -176,7 +253,7 @@ def removeCache(data_dir):
     if os.path.exists(os.path.join(cache_path,cache_name)):
         os.remove(os.path.join(cache_path,cache_name))
 
-def prepareData(datacsv, fold, class_mapping, foldDir,include_blank):
+def prepareData(datacsv, labelName, fold, class_mapping, foldDir,include_blank,mode="detect"):
     config = {}
     sets = ["Train","Validation","Test"]
     inverted_class_mapping = invert_class_mapping(class_mapping)
@@ -186,7 +263,10 @@ def prepareData(datacsv, fold, class_mapping, foldDir,include_blank):
         removeCache(data["Folder"][data.index[0]])
         sample_file_path = os.path.join(foldDir,"{}.txt".format(learning_set))
         if not os.path.exists(sample_file_path):
-            writeLabelTextFiles(data,foldDir,inverted_class_mapping,include_blank)
+            if mode == 'detect':
+                writeLabelTextFiles(data, labelName, foldDir,inverted_class_mapping,include_blank)
+            elif mode== 'segment':
+                writeSegmentationLabelToTextFile(data,foldDir,labelName)
         if learning_set == "Validation":
             config["val"] = sample_file_path
         else:
@@ -209,9 +289,13 @@ def getClassMapping(datacsv):
     class_mapping = dict(zip([i for i in range(len(class_names))],class_names))
     return class_mapping
 
-def saveMetrics(metrics,class_mapping,foldDir):
-    class_indexes = metrics.box.ap_class_index
-    maps = metrics.box.all_ap
+def saveMetrics(metrics,class_mapping,foldDir,mode):
+    if mode=='detect':
+        class_indexes = metrics.box.ap_class_index
+        maps = metrics.box.all_ap
+    elif mode == 'segment':
+        class_indexes = metrics.seg.ap_class_index
+        maps = metrics.seg.all_ap
     linesTo_write = []
     linesTo_write.append("mAP 50:\n")
     for i in range(len(class_indexes)):
@@ -229,16 +313,19 @@ def saveMetrics(metrics,class_mapping,foldDir):
 def main(args):
     #gpu = torch.device(args.device)
     dataCSVFile = pandas.read_csv(args.data_csv_file)
+    config = {}
     class_mapping = getClassMapping(dataCSVFile)
+    config["class_mapping"] = class_mapping
+    config['mode'] = args.mode
     numFolds = dataCSVFile["Fold"].max() + 1
     for fold in range(0, numFolds):
         foldDir = args.save_location + "_Fold_" + str(fold)
         if not os.path.exists(foldDir):
             os.mkdir(foldDir)
-        with open(os.path.join(foldDir,"class_mapping.yaml"),"w") as f:
+        with open(os.path.join(foldDir,"config.yaml"),"w") as f:
             yaml.dump(class_mapping,f)
-        dataPath = prepareData(dataCSVFile,fold,class_mapping,foldDir,args.include_blank)
-        yolo = YOLOv8()
+        dataPath = prepareData(dataCSVFile, args.label_name, fold,class_mapping,foldDir,args.include_blank)
+        yolo = YOLOv8(mode)
         if not os.path.exists(os.path.join(foldDir,"train/weights/best.pt")):
             model = yolo.createModel()
             model.train(data=dataPath,
