@@ -87,7 +87,7 @@ def get_arguments():
     parser.add_argument(
         '--output_mode',
         type=str,
-        default='detect',
+        default='segment',
         help='Which type of head to use for the YOLO model. One of: detect,segment'
     )
     parser.add_argument(
@@ -105,11 +105,11 @@ def xyxy_to_yolo(img_size,bbox):
     height = ((int(bbox["ymax"]) - int(bbox["ymin"]))) / img_size[0]
     return x_centre, y_centre, width, height
 
-def getMaxClassCounts(data):
+def getMaxClassCounts(data,labelName):
     class_counts = {}
     maxCount = 0
     for i in data.index:
-        bboxes = eval(data["Tool bounding box"][i])
+        bboxes = eval(data[labelName][i])
         for bbox in bboxes:
             if not bbox["class"] in class_counts:
                 class_counts[bbox["class"]] = 1
@@ -129,7 +129,7 @@ def determineNumDuplicatesNeeded(class_counts,max_count):
 
 def writeLabelTextFiles(data, labelName, foldDir,inverted_class_mapping,include_blank=True,balance = True):
     linesToWrite = []
-    class_counts, maxCount = getMaxClassCounts(data)
+    class_counts, maxCount = getMaxClassCounts(data,labelName)
     foundCounts = dict(zip([key for key in class_counts],[0 for key in class_counts]))
     print(class_counts)
     if data["Set"][data.index[0]] == "Train" and balance:
@@ -174,13 +174,14 @@ def writeLabelTextFiles(data, labelName, foldDir,inverted_class_mapping,include_
 
 def writeSegmentationLabelToTextFile(data,foldDir,labelName):
     linesToWrite = []
-    for i in trainingCSV.index:
+    for i in data.index:
         segName = data[labelName][i]
         imgName = data["FileName"][i]
         folder_path = data["Folder"][i]
         # Read in segmentation and image
+
         if os.path.exists(os.path.join(folder_path, segName)):
-            linesToWrite.append(os.path.join(folder_path,imgName))
+            linesToWrite.append("{}\n".format(os.path.join(folder_path,imgName)))
             seg = cv2.imread(os.path.join(folder_path, segName), cv2.IMREAD_GRAYSCALE)
 
             # Convert labelmap to coordinates
@@ -191,7 +192,7 @@ def writeSegmentationLabelToTextFile(data,foldDir,labelName):
             textFileName = "{}.txt".format(fileName)
             textFilePath = os.path.join(folder_path,textFileName)
             with open(textFilePath, 'w') as textFile:
-                textFile.write(str(coords))
+                textFile.writelines(coords)
     fileName = "{}.txt".format(data["Set"][data.index[0]])
     filePath = os.path.join(foldDir, fileName)
     with open(filePath, "w") as f:
@@ -201,7 +202,7 @@ def writeSegmentationLabelToTextFile(data,foldDir,labelName):
 def labelmap_to_contour(labelmap):
     contour_coordinates_list = []
 
-    present_classes = np.unique(labelmap)
+    present_classes = numpy.unique(labelmap)
     img_shape = labelmap.shape
 
     for class_label in present_classes:
@@ -209,33 +210,33 @@ def labelmap_to_contour(labelmap):
         if class_label == 0:
             continue
         # Create a binary mask for the current class
-        class_mask = np.uint8(labelmap == class_label)
+        class_mask = numpy.uint8(labelmap == class_label)
 
         # Find contours in the binary mask
         num_components, labels, stats, centroids = cv2.connectedComponentsWithStats(class_mask, 8, cv2.CV_32S)
-        sizes = np.array(stats[:, -1])
-        maxSize = np.max(sizes)
+        sizes = numpy.array(stats[:, -1])
+        maxSize = numpy.max(sizes)
         currentIndex = 0
 
         # Loop through all components except background
         for i in range(num_components):
             if sizes[i] != maxSize:
-                newImage = np.zeros(class_mask.shape)
+                newImage = numpy.zeros(class_mask.shape)
                 newImage[labels == i] = 1
                 newImage = newImage.astype("uint8")
 
                 contours, _ = cv2.findContours(newImage, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
-                maxindex = np.argmax([contours[i].shape[0] for i in range(len(contours))])
-                contours = np.asarray(contours[maxindex])
+                maxindex = numpy.argmax([contours[i].shape[0] for i in range(len(contours))])
+                contours = numpy.asarray(contours[maxindex])
 
-                contour_string = "{}"
+                contour_string = "{}".format(class_label)
                 for contour in contours:
                     for point in contour:
                         x = point[0] / img_shape[1]
                         y = point[1] / img_shape[0]
-                        contour_string += " {} {}"
+                        contour_string += " {} {}".format(x,y)
                 contour_string+="\n"
-                contour_coordinates_list.append(contour_coordinates)
+                contour_coordinates_list.append(contour_string)
     return contour_coordinates_list
 
 def invert_class_mapping(class_mapping):
@@ -256,7 +257,6 @@ def removeCache(data_dir):
 def prepareData(datacsv, labelName, fold, class_mapping, foldDir,include_blank,mode="detect"):
     config = {}
     sets = ["Train","Validation","Test"]
-    inverted_class_mapping = invert_class_mapping(class_mapping)
     for learning_set in sets:
         print("Parsing {} data".format(learning_set.lower()))
         data = datacsv.loc[(datacsv["Fold"] == fold) & (datacsv["Set"] == learning_set)]
@@ -264,6 +264,7 @@ def prepareData(datacsv, labelName, fold, class_mapping, foldDir,include_blank,m
         sample_file_path = os.path.join(foldDir,"{}.txt".format(learning_set))
         if not os.path.exists(sample_file_path):
             if mode == 'detect':
+                inverted_class_mapping = invert_class_mapping(class_mapping)
                 writeLabelTextFiles(data, labelName, foldDir,inverted_class_mapping,include_blank)
             elif mode== 'segment':
                 writeSegmentationLabelToTextFile(data,foldDir,labelName)
@@ -276,11 +277,11 @@ def prepareData(datacsv, labelName, fold, class_mapping, foldDir,include_blank,m
         yaml.dump(config,f)
     return os.path.join(foldDir,"data.yaml")
 
-def getClassMapping(datacsv):
+def getClassMapping(datacsv,labelName):
     class_names = []
     data = datacsv.loc[datacsv["Fold"]==0]
     for i in data.index:
-        bboxes = eval(data["Tool bounding box"][i])
+        bboxes = eval(data[labelName][i])
         if len(bboxes) > 0:
             for bbox in bboxes:
                 if not bbox["class"] in class_names:
@@ -314,9 +315,14 @@ def main(args):
     #gpu = torch.device(args.device)
     dataCSVFile = pandas.read_csv(args.data_csv_file)
     config = {}
-    class_mapping = getClassMapping(dataCSVFile)
+    if args.output_mode =="detect":
+        class_mapping = getClassMapping(dataCSVFile,args.label_name)
+    else:
+        dataset_path = os.path.dirname(args.data_csv_file)
+        with open(os.path.join(dataset_path,"class_mapping.yaml"),"r") as f:
+            class_mapping = yaml.safe_load(f)
     config["class_mapping"] = class_mapping
-    config['mode'] = args.mode
+    config['mode'] = args.output_mode
     numFolds = dataCSVFile["Fold"].max() + 1
     for fold in range(0, numFolds):
         foldDir = args.save_location + "_Fold_" + str(fold)
@@ -324,8 +330,8 @@ def main(args):
             os.mkdir(foldDir)
         with open(os.path.join(foldDir,"config.yaml"),"w") as f:
             yaml.dump(class_mapping,f)
-        dataPath = prepareData(dataCSVFile, args.label_name, fold,class_mapping,foldDir,args.include_blank)
-        yolo = YOLOv8(mode)
+        dataPath = prepareData(dataCSVFile, args.label_name, fold,class_mapping,foldDir,args.include_blank,args.output_mode)
+        yolo = YOLOv8(args.output_mode)
         if not os.path.exists(os.path.join(foldDir,"train/weights/best.pt")):
             model = yolo.createModel()
             model.train(data=dataPath,
